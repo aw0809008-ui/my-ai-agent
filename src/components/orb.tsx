@@ -42,8 +42,11 @@ export function Orb({
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const stateRef = useRef(state);
   const micRef = useRef(micLevel);
-  stateRef.current = state;
-  micRef.current = micLevel;
+
+  useEffect(() => {
+    stateRef.current = state;
+    micRef.current = micLevel;
+  }, [state, micLevel]);
 
   useEffect(() => {
     const canvas = canvasRef.current;

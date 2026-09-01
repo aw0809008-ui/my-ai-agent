@@ -40,6 +40,7 @@ export async function GET(req: Request, { params }: { params: Promise<{ id: stri
         content: m.content,
         sources: m.sources ?? null,
         toolEvents: m.toolEvents ?? null,
+        model: m.model ?? null,
         createdAt: m.createdAt.toISOString(),
       })),
       nextCursor: hasMore ? page[0].createdAt.toISOString() : null,

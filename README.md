@@ -33,7 +33,34 @@
                     └─────────────────────────────────────────────────┘
 ```
 
-**Model-agnostic provider interface** (`src/lib/ai-gateway.ts`):
+## 1b. Model Router (OpenRouter orchestration)
+
+`src/lib/model-router.ts` sits between the chat API and providers:
+
+```
+prompt ─► classify task (multi-signal, deterministic) ─► capability filter
+      ─► preference scoring ─► ONE best model streams ─► fallback chain (max 3)
+```
+
+- **Registry** (`src/lib/model-registry.ts`): every model's ID, enabled flag, per-task
+  preference, vision/audio/video/tools/JSON/reasoning flags and context size come from
+  env vars (`MODEL_GLM`, `MODEL_GLM_VISION=true`, …). Multimodal flags default to
+  **false** — enable them only after confirming the capability on
+  https://openrouter.ai/models. Nothing pretends a model can see images.
+- **Provider** (`src/lib/openrouter.ts`): server-side only. Timeout + exponential
+  backoff (2 attempts/model) for 429/5xx/network, streamed tokens, native tool-calling
+  and JSON-mode pass-through *only when the registry says the model supports them*.
+- **Fallbacks**: after a pre-first-token failure (429, timeout, 5xx, empty stream,
+  unlisted model) the next compatible model in the chain is tried (max 3). Mid-stream
+  failures finish cleanly instead of swapping models mid-answer. Total failure yields
+  a friendly message — offline tools keep working.
+- **Free-model protection**: one model per prompt (no parallel fan-out), per-user rate
+  limit (25 chat requests/min), 120s stream caps, short-lived health cache (45s), and
+  structured logs for `model_selected` / `model_ok` / `model_failed` (no keys, no prompts).
+- The chat UI shows which model answered under each reply; the admin panel shows
+  requests-per-model, fallback counts, average latency and web-search usage (24h).
+
+## 1c. Legacy provider interface (`src/lib/ai-gateway.ts`)
 
 | Method | Purpose | Requirement |
 |---|---|---|

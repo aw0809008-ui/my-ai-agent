@@ -154,6 +154,7 @@ export const messages = pgTable(
     toolEvents: jsonb("tool_events").$type<
       { name: string; status: string; detail?: string }[]
     >(),
+    model: text("model"), // which model produced this assistant message
     createdAt: timestamp("created_at", { withTimezone: true })
       .notNull()
       .defaultNow(),

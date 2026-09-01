@@ -124,9 +124,19 @@ export function VoiceOverlay({
   }, []);
 
   useEffect(() => {
-    if (open) start();
-    else stopAll();
-    return () => stopAll();
+    let alive = true;
+    if (open) {
+      // defer so state updates never run synchronously inside the effect
+      queueMicrotask(() => {
+        if (alive) start();
+      });
+    } else {
+      stopAll();
+    }
+    return () => {
+      alive = false;
+      stopAll();
+    };
   }, [open, start, stopAll]);
 
   const stopListening = async () => {

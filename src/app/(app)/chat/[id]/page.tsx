@@ -190,6 +190,11 @@ function ChatRoomInner({ id }: { id: string }) {
           } else if (event === "delta") {
             finalText += data.text;
             patchBot((m) => ({ ...m, content: m.content + data.text }));
+          } else if (event === "model") {
+            patchBot((m) => ({
+              ...m,
+              model: data.name + (data.fallback ? " (fallback)" : ""),
+            }));
           } else if (event === "tool") {
             patchBot((m) => {
               const tools = [...(m.toolEvents ?? [])];

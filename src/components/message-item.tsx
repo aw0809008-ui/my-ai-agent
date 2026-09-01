@@ -141,6 +141,13 @@ export const MessageView = memo(function MessageView({
         <p className="shimmer-text font-display text-[13px] font-medium">Thinking…</p>
       ) : null}
 
+      {/* which model answered (subtle, safe metadata only) */}
+      {m.model && !streaming && (
+        <p className="mt-1.5 text-[10px] font-medium tracking-wide text-faint">
+          {m.model}
+        </p>
+      )}
+
       {/* source cards */}
       {m.sources && m.sources.length > 0 && (
         <div className="no-scrollbar -mx-1 mt-3 flex gap-2 overflow-x-auto px-1 pb-1">

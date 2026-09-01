@@ -4,14 +4,13 @@ import { conversations, messages, memories, files, usageEvents } from "@/db/sche
 import { and, asc, eq, inArray } from "drizzle-orm";
 import { requireUser, type AuthUser } from "@/lib/auth";
 import { errResponse, apiError, limited, requestId, logEvent } from "@/lib/http";
+import { generateEmbedding, type ChatMessage } from "@/lib/ai-gateway";
 import {
-  aiConfigured,
-  aiHealth,
-  streamText,
-  analyzeImage,
-  generateEmbedding,
-  type ChatMessage,
-} from "@/lib/ai-gateway";
+  aiStatus,
+  classifyTask,
+  streamBest,
+  visionAnswer,
+} from "@/lib/model-router";
 import { executeTool, toolDescriptions, type ToolContext } from "@/lib/tools";
 import { routeIntent } from "@/lib/intent";
 import { topK } from "@/lib/embeddings";
@@ -88,7 +87,7 @@ const AI_OFFLINE_TEXT = `My language model isn't connected right now, so I can't
 - **Notes** — “Create a note: meeting agenda …”
 - **Web search** — “Search the web for today’s AI news”
 
-To enable full conversation, point the backend at your self-hosted model server (vLLM / Ollama / llama.cpp) with \`AI_BASE_URL\` and \`AI_MODEL\`. Details are in README → Model setup.`;
+To enable full conversation, connect a model layer on the backend: set \`OPENROUTER_API_KEY\` + \`MODEL_*\` IDs for routed free models, or point at your self-hosted server (vLLM / Ollama / llama.cpp) with \`AI_BASE_URL\` and \`AI_MODEL\`. Details are in README → Model setup.`;
 
 export async function POST(req: Request) {
   const rid = requestId();
@@ -187,30 +186,54 @@ export async function POST(req: Request) {
         try {
           send("meta", { conversationId: convId, requestId: rid });
 
-          const health = await aiHealth();
-          const aiUp = health.configured && health.reachable;
+          const status = await aiStatus();
+          const aiUp = status.configured && status.reachable;
+          let modelMeta: { name: string; fallback: boolean; category: string } | null = null;
+          /** Route + stream one answer. Yields deltas; model metadata is sent
+           *  via SSE automatically. Throws ALL_MODELS_UNAVAILABLE if the whole
+           *  fallback chain fails. */
+          async function* routed(
+            msgs: ChatMessage[],
+            category: Parameters<typeof streamBest>[1],
+            maxTokens: number
+          ): AsyncGenerator<string> {
+            const { events } = streamBest(msgs, category, { maxTokens });
+            for await (const ev of events) {
+              if (ev.type === "model") {
+                modelMeta = { name: ev.name, fallback: ev.fallback, category: ev.category };
+                send("model", {
+                  name: ev.name,
+                  provider: ev.provider,
+                  fallback: ev.fallback,
+                  category: ev.category,
+                });
+              } else if (ev.type === "delta") {
+                yield ev.text;
+              } else {
+                throw new Error("ALL_MODELS_UNAVAILABLE");
+              }
+            }
+          }
 
           // ---------- vision path -----------------------------------------
           if (attachedImages.length) {
             toolEvents.push({ name: "analyze_image", status: "running", detail: attachedImages[0].name });
             send("tool", { name: "analyze_image", status: "running", label: "Analyzing image" });
-            if (!process.env.VISION_MODEL || !aiUp) {
+            try {
+              const v = await visionAnswer(body.message, attachedImages[0].dataUrl, history);
+              toolEvents[toolEvents.length - 1].status = "ok";
+              send("tool", { name: "analyze_image", status: "ok", label: "Image analyzed" });
+              send("model", { name: v.modelName, provider: "openrouter", fallback: v.fallbackUsed, category: "image_understanding" });
+              modelMeta = { name: v.modelName, fallback: v.fallbackUsed, category: "image_understanding" };
+              pushAll(v.answer || "I couldn't extract anything useful from that image.");
+            } catch (e) {
               toolEvents[toolEvents.length - 1].status = "error";
-              send("tool", { name: "analyze_image", status: "error", label: "Vision model not configured" });
+              send("tool", { name: "analyze_image", status: "error", label: "Vision model unavailable" });
               pushAll(
-                `I can see you attached **${attachedImages[0].name}**, but image analysis needs a self-hosted vision model. Set \`VISION_MODEL\` (e.g. a Qwen2.5-VL or Llama 3.2 Vision server) on the AI gateway — see README → Model setup.`
+                e instanceof Error && e.message === "VISION_NOT_CONFIGURED"
+                  ? `I can see you attached **${attachedImages[0].name}**, but no vision-capable model is configured. Set e.g. \`MODEL_NEMOTRON_OMNI\` + \`MODEL_NEMOTRON_OMNI_VISION=true\` (after verifying image input on openrouter.ai/models), or a self-hosted \`VISION_MODEL\`.`
+                  : "The vision model failed to respond. Please try again."
               );
-            } else {
-              try {
-                const answer = await analyzeImage(body.message, attachedImages[0].dataUrl, history);
-                toolEvents[toolEvents.length - 1].status = "ok";
-                send("tool", { name: "analyze_image", status: "ok", label: "Image analyzed" });
-                pushAll(answer || "I couldn't extract anything useful from that image.");
-              } catch (e) {
-                toolEvents[toolEvents.length - 1].status = "error";
-                send("tool", { name: "analyze_image", status: "error", label: "Vision model error" });
-                pushAll("The vision model failed to respond. Please try again.");
-              }
             }
           } else {
             // ---------- deterministic intent fast-path ---------------------
@@ -227,7 +250,7 @@ export async function POST(req: Request) {
               }
 
               if (intent.tool === "search_web" && out.ok && out.sources?.length && aiUp) {
-                // synthesize with the self-hosted LLM, citing sources
+                // synthesize with the routed research model, citing sources
                 const sys = buildSystemPrompt(u);
                 const synth: ChatMessage[] = [
                   { role: "system", content: sys },
@@ -237,9 +260,11 @@ export async function POST(req: Request) {
                   },
                 ];
                 try {
-                  for await (const d of streamText(synth, { maxTokens: 1200 })) pushText(d);
-                } catch {
-                  pushAll(out.text);
+                  for await (const d of routed(synth, "web_research", 1200)) pushText(d);
+                } catch (e) {
+                  if (e instanceof Error && e.message === "ALL_MODELS_UNAVAILABLE")
+                    pushAll(out.text);
+                  else pushAll(out.text);
                 }
               } else {
                 pushAll(out.text);
@@ -253,37 +278,52 @@ export async function POST(req: Request) {
                 ...history,
                 { role: "user", content: body.message + attachmentContext },
               ];
+              const { category } = classifyTask(
+                body.message,
+                attachmentContext.length > 0
+              );
+              logEvent({ msg: "task_classified", rid, category });
 
               let toolRounds = 0;
               let proceed = true;
-              while (proceed && toolRounds < 3) {
+              let modelsGaveUp = false;
+              outer: while (proceed && toolRounds < 3) {
                 proceed = false;
                 let buffer = "";
                 let decidedNotTool = false;
-                const gen = streamText(chat, { maxTokens: 2048 });
+                let gen: AsyncGenerator<string>;
+                try {
+                  gen = routed(chat, category, 2048);
+                } catch {
+                  break;
+                }
                 let block = "";
-                for await (const delta of gen) {
-                  if (!decidedNotTool) {
-                    buffer += delta;
-                    const probe = buffer.replace(/^\s+/, "");
-                    if ("```tool".startsWith(probe.slice(0, 7)) && probe.length < 7) {
-                      continue; // still ambiguous
+                try {
+                  for await (const delta of gen) {
+                    if (!decidedNotTool) {
+                      buffer += delta;
+                      const probe = buffer.replace(/^\s+/, "");
+                      if ("```tool".startsWith(probe.slice(0, 7)) && probe.length < 7) {
+                        continue; // still ambiguous
+                      }
+                      if (probe.startsWith("```tool")) {
+                        block = buffer;
+                        for await (const rest of gen) block += rest;
+                        break;
+                      }
+                      decidedNotTool = true;
+                      pushText(buffer);
+                      buffer = "";
+                    } else {
+                      pushText(delta);
                     }
-                    if (probe.startsWith("```tool")) {
-                      decidedNotTool = false;
-                      buffer += ""; // keep accumulating inside tool block
-                      // switch to accumulation mode
-                      block = buffer;
-                      // consume the rest without streaming
-                      for await (const rest of gen) block += rest;
-                      break;
-                    }
-                    decidedNotTool = true;
-                    pushText(buffer);
-                    buffer = "";
-                  } else {
-                    pushText(delta);
                   }
+                } catch (e) {
+                  if (e instanceof Error && e.message === "ALL_MODELS_UNAVAILABLE") {
+                    modelsGaveUp = true;
+                    break outer;
+                  }
+                  throw e;
                 }
                 if (block) {
                   const m = block.match(/```tool\s*([\s\S]*?)```/);
@@ -317,6 +357,11 @@ export async function POST(req: Request) {
                   }
                 }
               }
+              if (modelsGaveUp && full === "") {
+                pushAll(
+                  "All configured models are unavailable right now (rate limits or provider errors — common with free-tier models). Please try again in a minute.\n\nMeanwhile, reminders, memory, notes and web search still work: try “Remember that…”, “Remind me tomorrow at 9am…”, or “Search the web for…”."
+                );
+              }
             } else {
               // ---------- honest offline state ------------------------------
               let offline = AI_OFFLINE_TEXT;
@@ -341,6 +386,7 @@ export async function POST(req: Request) {
               content: full,
               sources,
               toolEvents: toolEvents.length ? toolEvents : null,
+              model: modelMeta?.name ?? null,
             })
             .returning({ id: messages.id });
           await db
@@ -355,7 +401,10 @@ export async function POST(req: Request) {
               ms: Date.now() - started,
               approxTokens: Math.ceil(full.length / 4),
               tools: toolEvents.map((t) => t.name),
-              aiUp: undefined,
+              model: modelMeta?.name ?? null,
+              category: modelMeta?.category ?? null,
+              fallback: modelMeta?.fallback ?? false,
+              searchUsed: toolEvents.some((t) => t.name === "search_web"),
             },
           });
           logEvent({

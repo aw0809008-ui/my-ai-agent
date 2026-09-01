@@ -77,7 +77,11 @@ export function AppShell({ children }: { children: ReactNode }) {
   }, [router]);
 
   useEffect(() => {
-    load();
+    // defer the first fetch so no setState runs synchronously inside the effect
+    const t = setTimeout(() => {
+      load();
+    }, 0);
+    return () => clearTimeout(t);
   }, [load]);
 
   // apply theme

@@ -29,7 +29,9 @@ import clsx from "clsx";
 
 interface AdminStats {
   totals: Record<string, number>;
-  ai: { configured: boolean; reachable: boolean; model: string };
+  byModel?: Record<string, number>;
+  byCategory?: Record<string, number>;
+  ai: { configured: boolean; reachable: boolean; model: string; provider?: string };
   recentErrors: { tool: string; error: string; at: string }[];
 }
 
@@ -43,22 +45,28 @@ export default function SettingsPage() {
   const [adminBusy, setAdminBusy] = useState(false);
 
   useEffect(() => {
+    const timeouts: number[] = [];
     if (typeof window !== "undefined" && "speechSynthesis" in window) {
       const load = () => setVoices(window.speechSynthesis.getVoices());
-      load();
+      timeouts.push(window.setTimeout(load, 0));
       window.speechSynthesis.onvoiceschanged = load;
     }
-    if (typeof Notification !== "undefined") setNotifPerm(Notification.permission);
+    if (typeof Notification !== "undefined") {
+      timeouts.push(window.setTimeout(() => setNotifPerm(Notification.permission), 0));
+    }
+    return () => timeouts.forEach((t) => window.clearTimeout(t));
   }, []);
 
   useEffect(() => {
-    if (user.role === "admin") {
+    if (user.role !== "admin") return;
+    const t = setTimeout(() => {
       setAdminBusy(true);
       api<AdminStats>("/api/admin/stats")
         .then(setAdmin)
         .catch(() => {})
         .finally(() => setAdminBusy(false));
-    }
+    }, 0);
+    return () => clearTimeout(t);
   }, [user.role]);
 
   const signOut = async () => {
@@ -402,12 +410,37 @@ export default function SettingsPage() {
                   </span>
                 </div>
                 <p className="mt-1 text-[11.5px] text-mist">
-                  {admin.ai.configured ? admin.ai.model : "AI_BASE_URL not set"}
+                  {admin.ai.configured
+                    ? `${admin.ai.provider === "openrouter" ? "OpenRouter" : "Self-hosted"} · ${admin.ai.model}`
+                    : "No model gateway configured"}
                 </p>
                 <p className="mt-1 text-[11.5px] text-mist">
                   Tool calls: {admin.totals.toolCallsOk} ok · {admin.totals.toolCallsError} errors
+                  {" · "}Fallbacks 24h: {admin.totals.fallbacks24h ?? 0}
+                  {" · "}Avg latency: {Math.round((admin.totals.avgLatencyMs24h ?? 0) / 1000)}s
+                  {" · "}Web searches 24h: {admin.totals.webSearches24h ?? 0}
                 </p>
               </div>
+              {admin.byModel && Object.keys(admin.byModel).length > 0 && (
+                <div className="mt-2 rounded-2xl border border-line bg-abyss p-3.5">
+                  <p className="mb-2 text-[11.5px] font-semibold text-mist">
+                    Requests by model (24h)
+                  </p>
+                  <div className="flex flex-wrap gap-1.5">
+                    {Object.entries(admin.byModel)
+                      .sort((a, b) => b[1] - a[1])
+                      .slice(0, 8)
+                      .map(([model, count]) => (
+                        <span
+                          key={model}
+                          className="rounded-full border border-violet/25 bg-violet/10 px-2.5 py-1 text-[10.5px] font-semibold text-violet"
+                        >
+                          {model}: {count}
+                        </span>
+                      ))}
+                  </div>
+                </div>
+              )}
               {admin.recentErrors.length > 0 && (
                 <div className="mt-2 rounded-2xl border border-danger/25 bg-danger/5 p-3.5">
                   <p className="mb-1.5 text-[11.5px] font-semibold text-danger">Recent tool errors</p>

@@ -10,10 +10,10 @@ import {
   toolCalls,
   usageEvents,
 } from "@/db/schema";
-import { desc, eq, gte, sql } from "drizzle-orm";
+import { and, desc, eq, gte, sql } from "drizzle-orm";
 import { requireAdmin } from "@/lib/auth";
 import { errResponse } from "@/lib/http";
-import { aiHealth } from "@/lib/ai-gateway";
+import { aiStatus } from "@/lib/model-router";
 
 export const dynamic = "force-dynamic";
 
@@ -43,7 +43,33 @@ export async function GET() {
       .where(eq(toolCalls.status, "error"))
       .orderBy(desc(toolCalls.createdAt))
       .limit(5);
-    const ai = await aiHealth();
+
+    // model routing metrics from the last 24h of usage events
+    const chatEvents = await db
+      .select({ meta: usageEvents.meta })
+      .from(usageEvents)
+      .where(and(eq(usageEvents.kind, "chat"), gte(usageEvents.createdAt, since)))
+      .limit(5000);
+    const byModel: Record<string, number> = {};
+    const byCategory: Record<string, number> = {};
+    let fallbacks = 0;
+    let latencySum = 0;
+    let latencyN = 0;
+    let webSearches = 0;
+    for (const ev of chatEvents) {
+      const meta = ev.meta ?? {};
+      const model = typeof meta.model === "string" ? meta.model : null;
+      if (model) byModel[model] = (byModel[model] ?? 0) + 1;
+      const cat = typeof meta.category === "string" ? meta.category : null;
+      if (cat) byCategory[cat] = (byCategory[cat] ?? 0) + 1;
+      if (meta.fallback === true) fallbacks++;
+      if (typeof meta.ms === "number") {
+        latencySum += meta.ms;
+        latencyN++;
+      }
+      if (meta.searchUsed === true) webSearches++;
+    }
+    const ai = await aiStatus();
 
     return Response.json({
       totals: {
@@ -66,7 +92,12 @@ export async function GET() {
         toolCallsOk: toolOk,
         toolCallsError: toolErrs,
         storageBytes: storage.total,
+        fallbacks24h: fallbacks,
+        webSearches24h: webSearches,
+        avgLatencyMs24h: latencyN ? Math.round(latencySum / latencyN) : 0,
       },
+      byModel,
+      byCategory,
       ai,
       recentErrors: recentErrors.map((e) => ({
         tool: e.tool,

@@ -53,6 +53,7 @@ export interface MessageItem {
   content: string;
   sources?: SourceItem[] | null;
   toolEvents?: ToolEventItem[] | null;
+  model?: string | null;
   createdAt: string;
 }
 

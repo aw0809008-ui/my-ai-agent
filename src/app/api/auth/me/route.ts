@@ -3,7 +3,7 @@ import { userSettings } from "@/db/schema";
 import { eq } from "drizzle-orm";
 import { requireUser, ensureProfileRows } from "@/lib/auth";
 import { errResponse } from "@/lib/http";
-import { aiHealth } from "@/lib/ai-gateway";
+import { aiStatus } from "@/lib/model-router";
 
 export const dynamic = "force-dynamic";
 
@@ -16,7 +16,7 @@ export async function GET() {
       .from(userSettings)
       .where(eq(userSettings.userId, u.id))
       .limit(1);
-    const ai = await aiHealth();
+    const ai = await aiStatus();
     return Response.json({
       user: {
         id: u.id,
