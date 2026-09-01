@@ -192,6 +192,18 @@ export async function POST(req: Request) {
           /** Route + stream one answer. Yields deltas; model metadata is sent
            *  via SSE automatically. Throws ALL_MODELS_UNAVAILABLE if the whole
            *  fallback chain fails. */
+          const UNAVAILABLE_HINTS: Record<string, string> = {
+            auth: "The AI provider rejected the API key (401/403). Please check `OPENROUTER_API_KEY` in your server environment variables.",
+            quota: "The AI provider reports insufficient account credits/quota for this request.",
+            not_found:
+              "The provider couldn't find some models (404). Check the `MODEL_*` IDs — and in OpenRouter → Settings → Privacy, make sure free models are allowed (\"Free model publication\").",
+            rate_limited:
+              "Free model rate limit hit right now (these public free endpoints have small daily quotas). Please try again in a little while.",
+            upstream: "The model provider's servers are having trouble (5xx). Please try again shortly.",
+            network: "The server couldn't reach the model provider (network/timeout). Please try again.",
+            unsupported: "The provider rejected the request format. Please try again.",
+            unknown: "All configured models are unavailable right now (provider errors).",
+          };
           async function* routed(
             msgs: ChatMessage[],
             category: Parameters<typeof streamBest>[1],
@@ -210,7 +222,7 @@ export async function POST(req: Request) {
               } else if (ev.type === "delta") {
                 yield ev.text;
               } else {
-                throw new Error("ALL_MODELS_UNAVAILABLE");
+                throw new Error(`ALL_MODELS_UNAVAILABLE:${ev.reason ?? "unknown"}`);
               }
             }
           }
@@ -288,6 +300,7 @@ export async function POST(req: Request) {
               let toolRounds = 0;
               let proceed = true;
               let modelsGaveUp = false;
+              let unavailableReason = "unknown";
               outer: while (proceed && toolRounds < 3) {
                 proceed = false;
                 let buffer = "";
@@ -320,7 +333,8 @@ export async function POST(req: Request) {
                     }
                   }
                 } catch (e) {
-                  if (e instanceof Error && e.message === "ALL_MODELS_UNAVAILABLE") {
+                  if (e instanceof Error && e.message.startsWith("ALL_MODELS_UNAVAILABLE")) {
+                    unavailableReason = e.message.split(":")[1] ?? "unknown";
                     modelsGaveUp = true;
                     break outer;
                   }
@@ -360,7 +374,8 @@ export async function POST(req: Request) {
               }
               if (modelsGaveUp && full === "") {
                 pushAll(
-                  "All configured models are unavailable right now (rate limits or provider errors — common with free-tier models). Please try again in a minute.\n\nMeanwhile, reminders, memory, notes and web search still work: try “Remember that…”, “Remind me tomorrow at 9am…”, or “Search the web for…”."
+                  (UNAVAILABLE_HINTS[unavailableReason] ?? UNAVAILABLE_HINTS.unknown) +
+                    "\n\nMeanwhile, reminders, memory, notes and web search still work: try “Remember that…”, “Remind me tomorrow at 9am…”, or “Search the web for…”."
                 );
               }
             } else {

@@ -27,6 +27,7 @@ import {
   streamOnce,
   OpenRouterError,
   type APIMessage,
+  type FailureCategory,
   type ProviderCaps,
   imageMessage,
 } from "@/lib/openrouter";
@@ -215,7 +216,7 @@ function estimateTokens(messages: ChatMessage[]): number {
 export type StreamEvent =
   | { type: "model"; name: string; provider: "openrouter" | "self-hosted"; key: string; fallback: boolean; category: TaskCategory }
   | { type: "delta"; text: string }
-  | { type: "unavailable" };
+  | { type: "unavailable"; reason?: FailureCategory; attempted?: string[] };
 
 export interface StreamOutcome {
   modelName: string | null;
@@ -259,12 +260,15 @@ export function streamBest(
         providerCaps: health.reachable ? health.caps : null,
       });
       const sequence = best ? [best, ...chain] : [];
+      const failureCats: FailureCategory[] = [];
+      const attempted: string[] = [];
       let emitted = false;
       for (let i = 0; i < sequence.length; i++) {
         const meta = sequence[i];
         const startedAt = Date.now();
         let tokens = 0;
         outcome.attempts++;
+        attempted.push(meta.key);
         try {
           for await (const delta of streamOnce(messages, meta, {
             maxTokens: opts.maxTokens,
@@ -301,10 +305,13 @@ export function streamBest(
           });
           return; // success
         } catch (e) {
+          const cat = e instanceof OpenRouterError ? e.category : "network";
+          failureCats.push(cat);
           logEvent({
             msg: "model_failed",
             model: meta.key,
             category,
+            failureCategory: cat,
             ms: Date.now() - startedAt,
             error: e instanceof Error ? e.message.slice(0, 200) : "unknown",
             status: e instanceof OpenRouterError ? e.status : null,
@@ -315,7 +322,20 @@ export function streamBest(
         }
       }
       outcome.modelName = null;
-      yield { type: "unavailable" };
+      // pick the most actionable failure category for the user-facing message
+      const priority: FailureCategory[] = [
+        "auth", "quota", "not_found", "rate_limited", "unsupported", "upstream", "network", "empty", "unknown",
+      ];
+      const reason =
+        priority.find((c) => failureCats.includes(c)) ?? (failureCats.length ? "unknown" : undefined);
+      logEvent({
+        msg: "all_models_unavailable",
+        category,
+        reason: reason ?? "no_candidates",
+        attempted,
+        failureCats,
+      });
+      yield { type: "unavailable", reason: reason ?? "unknown", attempted };
       return;
     }
 

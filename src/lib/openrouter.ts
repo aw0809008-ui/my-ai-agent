@@ -35,13 +35,37 @@ export function imageMessage(question: string, imageDataUrl: string): APIMessage
 
 const BASE_URL = (process.env.OPENROUTER_BASE_URL ?? "https://openrouter.ai/api/v1").replace(/\/$/, "");
 
+export type FailureCategory =
+  | "auth"
+  | "quota"
+  | "rate_limited"
+  | "not_found"
+  | "upstream"
+  | "network"
+  | "unsupported"
+  | "empty"
+  | "unknown";
+
+export function classifyStatus(status: number | null): FailureCategory {
+  if (status === null) return "network";
+  if (status === 401 || status === 403) return "auth";
+  if (status === 402) return "quota";
+  if (status === 404) return "not_found";
+  if (status === 408 || status === 429) return "rate_limited";
+  if (status >= 500) return "upstream";
+  if (status === 400 || status === 422) return "unsupported";
+  return "unknown";
+}
+
 export class OpenRouterError extends Error {
   status: number | null;
   retryable: boolean;
+  category: FailureCategory;
   constructor(message: string, status: number | null, retryable: boolean) {
     super(message);
     this.status = status;
     this.retryable = retryable;
+    this.category = classifyStatus(status);
   }
 }
 
@@ -175,9 +199,30 @@ async function fetchWithRetry(
         continue;
       }
       if (!res.ok) {
-        const body = await res.text().catch(() => "");
+        // capture the provider's safe error code for diagnostics (never auth data)
+        let providerCode = "";
+        const raw = await res.text().catch(() => "");
+        try {
+          const j = JSON.parse(raw) as { error?: { code?: number | string; message?: string } };
+          if (j.error?.code !== undefined) providerCode = String(j.error.code);
+          if (j.error?.message) {
+            const msg = j.error.message.slice(0, 200);
+            throw new OpenRouterError(
+              `OpenRouter ${res.status} (${providerCode || "no code"}): ${msg}`,
+              res.status,
+              RETRYABLE_STATUSES.has(res.status)
+            );
+          }
+        } catch (parseErr) {
+          if (parseErr instanceof OpenRouterError) throw parseErr;
+          throw new OpenRouterError(
+            `OpenRouter error ${res.status}`,
+            res.status,
+            RETRYABLE_STATUSES.has(res.status)
+          );
+        }
         throw new OpenRouterError(
-          `OpenRouter error ${res.status}${body ? `: ${body.slice(0, 160)}` : ""}`,
+          `OpenRouter error ${res.status}${raw ? `: ${raw.slice(0, 120)}` : ""}`,
           res.status,
           RETRYABLE_STATUSES.has(res.status)
         );
