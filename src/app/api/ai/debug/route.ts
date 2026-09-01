@@ -10,7 +10,11 @@ import {
 } from "@/lib/openrouter";
 import { selectModels } from "@/lib/model-router";
 
+// Explicit Node runtime: this route reads server-only env vars, PostgreSQL auth,
+// and performs a server-side OpenRouter probe. It must never be edge-cached.
+export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
+export const revalidate = 0;
 
 const ENV_VARS = [
   "OPENROUTER_API_KEY",
@@ -130,19 +134,31 @@ export async function GET() {
             ? `COMPLETION_FAILED_${(probe.category ?? "unknown").toUpperCase()}: see probe.providerMessage.`
             : "OK";
 
-    return Response.json({
-      env,
-      provider: {
-        configured: openRouterConfigured(),
-        modelsEndpointReachable: health.reachable,
+    return Response.json(
+      {
+        route: "/api/ai/debug",
+        deployment: {
+          commitSha: process.env.VERCEL_GIT_COMMIT_SHA?.slice(0, 12) ?? "local",
+          environment: process.env.VERCEL_ENV ?? process.env.NODE_ENV ?? "unknown",
+        },
+        env,
+        provider: {
+          configured: openRouterConfigured(),
+          modelsEndpointReachable: health.reachable,
+        },
+        models,
+        selectionForHello: selection.best
+          ? {
+              best: selection.best.key,
+              chain: selection.chain.map((c) => c.key),
+              dropped: selection.drop,
+            }
+          : { best: null, dropped: selection.drop },
+        probe,
+        diagnosis,
       },
-      models,
-      selectionForHello: selection.best
-        ? { best: selection.best.key, chain: selection.chain.map((c) => c.key), dropped: selection.drop }
-        : { best: null, dropped: selection.drop },
-      probe,
-      diagnosis,
-    });
+      { headers: { "Cache-Control": "private, no-store, max-age=0" } }
+    );
   } catch (e) {
     return errResponse(e);
   }
