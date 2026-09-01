@@ -73,21 +73,32 @@ const defs: ToolDef[] = [
     name: "search_web",
     description: "Search the web and return results with sources.",
     schema: z.object({ query: z.string().min(2).max(300) }),
-    timeoutMs: 12_000,
+    timeoutMs: 25_000,
     run: async ({ query }) => {
-      const { results, provider } = await webSearch(query, 6);
-      if (!results.length)
+      const { results, provider, failures } = await webSearch(query, 6);
+      if (!results.length) {
+        const reason = failures.length
+          ? `providers failed (${failures.join(", ")})`
+          : "no provider configured";
         return {
-          ok: true,
-          text: `No web results found for "${query}".`,
-          data: { provider, results: [] },
+          // Search FAILED — the model must never pretend it searched.
+          ok: false,
+          text:
+            `Web search failed for "${query}" right now: ${reason}. ` +
+            `Do NOT fabricate current information or pretend the search succeeded — ` +
+            `tell the user search is temporarily unavailable. ` +
+            (process.env.SEARXNG_URL
+              ? ""
+              : `Hint: setting SEARXNG_URL to a self-hosted SearXNG instance makes search reliable (public search engines often block server IPs).`),
+          data: { provider: null, failures, results: [] },
         };
+      }
       const text = results
         .map((r, i) => `${i + 1}. ${r.title} — ${r.source}\n${r.snippet}`)
         .join("\n\n");
       return {
         ok: true,
-        text: `Web results for "${query}" (${provider}):\n${text}`,
+        text: `Web results for "${query}" (source: ${provider}):\n${text}`,
         data: { provider, results },
         sources: results,
       };

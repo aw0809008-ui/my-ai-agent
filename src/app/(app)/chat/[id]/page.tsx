@@ -37,6 +37,7 @@ function ChatRoomInner({ id }: { id: string }) {
   const router = useRouter();
   const params = useSearchParams();
   const { settings, user } = useUnwrapShell();
+  const { toast } = useShell();
   const [cid, setCid] = useState<string | null>(id === "new" ? null : id);
   const [title, setTitle] = useState("New conversation");
   const [messages, setMessages] = useState<ChatMsg[]>([]);
@@ -61,8 +62,21 @@ function ChatRoomInner({ id }: { id: string }) {
       const attach = params.get("attach");
       requestAnimationFrame(() => {
         if (q) composerRef.current?.setText(q);
-        if (attach === "image") composerRef.current?.openAttach("image");
-        if (attach === "file") composerRef.current?.openAttach("file");
+        if (attach) {
+          // Programmatic file-picker clicks are blocked by Safari/iOS outside
+          // a user gesture — attempt it, and also show an explicit hint.
+          composerRef.current?.openAttach(attach as "image" | "file");
+          const t = setTimeout(
+            () =>
+              toast(
+                attach === "image"
+                  ? "Not open? Tap + and choose an image (PNG/JPG/WebP, ≤2 MB)"
+                  : "Not open? Tap + and choose a file (≤2 MB)"
+              ),
+            700
+          );
+          void t;
+        }
         composerRef.current?.focus();
       });
       return;
@@ -436,6 +450,7 @@ function ChatRoomInner({ id }: { id: string }) {
         busy={busy}
         onSend={(t, f) => send(t, f)}
         onVoice={() => setVoiceOpen(true)}
+        onError={(msg) => toast(msg)}
       />
       <VoiceOverlay
         open={voiceOpen}

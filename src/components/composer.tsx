@@ -25,10 +25,32 @@ interface Props {
   onVoice: () => void;
   busy: boolean;
   placeholder?: string;
+  onError?: (message: string) => void;
+}
+
+const MAX_BYTES = 2 * 1024 * 1024;
+const IMAGE_EXTS = new Set(["png", "jpg", "jpeg", "webp"]);
+const DOC_EXTS = new Set(["txt", "md", "csv", "json", "pdf"]);
+
+function validateClient(f: File): string | null {
+  const ext = (f.name.toLowerCase().split(".").pop() ?? "").trim();
+  if (ext === "heic" || ext === "heif" || f.type === "image/heic")
+    return "iPhone HEIC photos aren't supported yet — please export/convert to JPG first.";
+  if (f.size > MAX_BYTES)
+    return `"${f.name}" is over the 2 MB limit — on iPhone use "Options → Medium/Small" when sharing, or compress it.`;
+  const okType =
+    IMAGE_EXTS.has(ext) ||
+    DOC_EXTS.has(ext) ||
+    f.type.startsWith("image/") ||
+    f.type.startsWith("text/") ||
+    f.type === "application/pdf";
+  if (!okType)
+    return `"${f.name}" type isn't allowed. Supported: PNG, JPG, WebP, PDF, TXT, MD, CSV, JSON.`;
+  return null;
 }
 
 export const Composer = forwardRef<ComposerHandle, Props>(function Composer(
-  { onSend, onVoice, busy, placeholder },
+  { onSend, onVoice, busy, placeholder, onError },
   ref
 ) {
   const [text, setText] = useState("");
@@ -69,6 +91,16 @@ export const Composer = forwardRef<ComposerHandle, Props>(function Composer(
 
   const upload = async (list: FileList) => {
     for (const f of Array.from(list).slice(0, 4)) {
+      // Client-side pre-validation: no silent server round-trip for obvious failures
+      const fail = validateClient(f);
+      if (fail) {
+        onError?.(fail);
+        setFiles((prev) => [
+          ...prev,
+          { id: `v-${Date.now()}-${f.name}`, name: fail, error: true },
+        ]);
+        continue;
+      }
       const tempId = `u-${Date.now()}-${f.name}`;
       setFiles((prev) => [...prev, { id: tempId, name: f.name, uploading: true }]);
       try {
@@ -79,11 +111,11 @@ export const Composer = forwardRef<ComposerHandle, Props>(function Composer(
           prev.map((p) => (p.id === tempId ? { ...res, uploading: false } : p))
         );
       } catch (e) {
+        const msg = (e as Error).message;
+        onError?.(msg);
         setFiles((prev) =>
           prev.map((p) =>
-            p.id === tempId
-              ? { ...p, uploading: false, error: true, name: (e as Error).message }
-              : p
+            p.id === tempId ? { ...p, uploading: false, error: true, name: msg } : p
           )
         );
       }

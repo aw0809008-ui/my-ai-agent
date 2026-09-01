@@ -130,14 +130,16 @@ interface SelectOptions {
 
 /** Effective capability = env declaration VERIFIED against provider metadata.
  *  A capability is usable only when the provider actually reports it; a
- *  provider-confirmed capability unlocks even without an explicit env flag. */
+ *  provider-confirmed capability unlocks even without an explicit env flag.
+ *  When metadata is TEMPORARILY unavailable (health probe down), models
+ *  assigned that task in the registry stay candidates — the provider request
+ *  itself is the final verdict (graceful, still honest). */
 function effectiveCaps(meta: ModelMeta, caps?: ProviderCaps | null) {
   if (!caps) {
-    // metadata unavailable: trust env declarations only (conservative)
     return {
-      vision: meta.supportsVision,
-      audio: meta.supportsAudio,
-      video: meta.supportsVideo,
+      vision: meta.supportsVision || meta.taskTypes.image_understanding !== undefined,
+      audio: meta.supportsAudio || meta.taskTypes.audio_understanding !== undefined,
+      video: meta.supportsVideo || meta.taskTypes.video_understanding !== undefined,
       tools: meta.supportsTools,
       structured: meta.supportsStructuredOutput,
       maxContext: meta.maxContext,

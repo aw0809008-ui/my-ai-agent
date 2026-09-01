@@ -180,6 +180,43 @@ AI_MODEL=qwen2.5-14b
 
 To **replace the model**: rerun the server with a different model and update `AI_MODEL`. Done.
 
+## 6b. Web search hardening (`src/lib/search.ts`)
+
+Keyless provider chain with sanitized failure logging — the previous single-provider
+DuckDuckGo parser silently returned `[]` when DDG blocked the server IP.
+
+```
+SearXNG (SEARXNG_URL, self-hosted — most reliable)
+  → DuckDuckGo HTML → DuckDuckGo Lite → Mojeek → Bing (with /ck/a redirect decoding)
+```
+
+- Every provider reports a sanitized status (http code / empty / parse failure) to
+  server logs via `web_search` / `web_search_exhausted` events — never the query
+  payload.
+- Results are URL-validated (http/https only), DDG/Bing redirect wrappers are
+  decoded, deduped by domain+path, titles/snippets sanitized.
+- On total failure the tool returns an honest error telling the model **not to
+  fabricate current information**; the user sees a specific reason, not a generic
+  message.
+- Providers can be disabled individually for ops debugging:
+  `SEARCH_DISABLE_DDG=1`, `SEARCH_DISABLE_DDG_LITE=1`, `SEARCH_DISABLE_MOJEEK=1`,
+  `SEARCH_DISABLE_BING=1`.
+- **Production note:** public engines aggressively challenge datacenter IPs. For
+  dependable search, run a small SearXNG container and set `SEARXNG_URL`.
+
+## 6c. Uploads & vision
+
+- App-level limits: ≤ **2 MB** per file (deliberately below Vercel's ~4.5 MB
+  serverless body cap), PNG/JPG/WEBP/PDF/TXT/MD/CSV/JSON only, user-scoped storage in
+  Postgres, owner-only serving, server-side MIME + extension whitelist.
+- Client pre-validation avoids silent failures; upload errors surface as a toast +
+  chip with the exact reason. iPhone **HEIC** photos aren't supported (clear
+  guidance shown — export as JPG).
+- Vision requests route to provider-verified image-capable models
+  (Nemotron 3 Nano Omni → Gemma 4 31B fallback). If the provider's capability
+  probe is temporarily down, registry-assigned vision models stay candidates so a
+  transient hiccup doesn't hard-fail the flow; the provider request is the verdict.
+
 ## 7. Tools (function calling)
 
 Internal registry: `search_web`, `save_memory`, `search_memory`, `delete_memory`,
@@ -237,6 +274,23 @@ GET /api/health
 Notes for Vercel: SSE streaming works on serverless functions; uploads are capped at 2 MB
 (Vercel body limit is 4.5 MB). The first registered user owns the admin dashboard.
 
+### Production checklist
+
+- [ ] `DATABASE_URL` (pooled Postgres — Supabase **pooler** host / Neon `-pooler`)
+- [ ] Tables pushed once: `DATABASE_URL=... npx drizzle-kit push`
+- [ ] `OPENROUTER_API_KEY` set (Production env), model IDs copied **exactly** from
+      openrouter.ai/models — note `minimax/minimax-m2.5:free` does **not** exist
+      (use `minimax/minimax-m2.7:free` or `minimax/minimax-m3:free`)
+- [ ] `SEARXNG_URL` set for reliable search (public engines block cloud IPs)
+- [ ] `EXPOSE_RESET_LINK=false` for public deployments
+- [ ] Vercel **Deployment Protection → Vercel Authentication: Disabled** (or
+      Preview-only). If enabled on Production, every URL — including APIs — 302s to
+      a Vercel SSO page and the app appears broken.
+- [ ] Admin login → open `/api/ai/debug` after each env change. It reports env
+      presence (never values), provider listing status, and a real minimal probe
+      with the exact failure category (auth / quota / not_found / rate_limited /
+      upstream / network).
+
 ### Self-hosted (VPS / Docker / bare metal)
 
 One Node process is enough to start (backend + frontend). Put it behind HTTPS (Caddy/nginx),
@@ -255,8 +309,10 @@ react-native shell reusing this exact API.
 
 | Symptom | Fix |
 |---|---|
-| "AI not linked" chip | Set `AI_BASE_URL` + `AI_MODEL`, restart backend |
-| "Model server unreachable" | GPU box down / firewall; check `GET /v1/models` from the backend host |
+| "AI not linked" chip | Set `OPENROUTER_API_KEY` + `MODEL_*` (or self-hosted `AI_BASE_URL`/`AI_MODEL`) |
+| Chat says models unavailable | Open `/api/ai/debug` (admin) — it names the exact reason (401 key / 404 model ID / 429 free quota / 5xx upstream) |
+| Search returns nothing | Check server logs `web_search_exhausted`; set `SEARXNG_URL` — public engines challenge datacenter IPs |
+| All URLs redirect to a Vercel SSO page | Deployment Protection → Vercel Authentication: Disabled / Preview-only |
+| Image upload rejected | ≤ 2 MB, PNG/JPG/WEBP only; iPhone photos: share as "Medium" or convert HEIC → JPG |
+| "No vision-capable model" | Set `MODEL_NEMOTRON_OMNI`/Gemma with provider-verified image input |
 | Voice says STT unavailable | Use Chrome (on-device ASR) or set `STT_MODEL` |
-| Vision says not configured | Set `VISION_MODEL` to a VLM on your gateway |
-| Search empty | Network egress blocked, or set up SearXNG (`SEARXNG_URL`) |
