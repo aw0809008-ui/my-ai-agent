@@ -1,0 +1,399 @@
+import { z } from "zod";
+import { db } from "@/db";
+import { conversations, messages, memories, files, usageEvents } from "@/db/schema";
+import { and, asc, eq, inArray } from "drizzle-orm";
+import { requireUser, type AuthUser } from "@/lib/auth";
+import { errResponse, apiError, limited, requestId, logEvent } from "@/lib/http";
+import {
+  aiConfigured,
+  aiHealth,
+  streamText,
+  analyzeImage,
+  generateEmbedding,
+  type ChatMessage,
+} from "@/lib/ai-gateway";
+import { executeTool, toolDescriptions, type ToolContext } from "@/lib/tools";
+import { routeIntent } from "@/lib/intent";
+import { topK } from "@/lib/embeddings";
+import { IMAGE_MIMES } from "@/lib/extract";
+
+export const dynamic = "force-dynamic";
+export const maxDuration = 120;
+
+const bodySchema = z.object({
+  conversationId: z.string().uuid().optional(),
+  message: z.string().min(1).max(8000),
+  fileIds: z.array(z.string().uuid()).max(4).optional(),
+});
+
+type Source = { title: string; url: string; snippet: string };
+type ToolEvent = { name: string; status: string; detail?: string };
+
+function buildSystemPrompt(u: AuthUser): string {
+  const name = u.profile.displayName || "the user";
+  const lang =
+    u.profile.language === "roman-ur"
+      ? "The user prefers Roman Urdu — write naturally in Roman Urdu (Urdu in Latin script) unless they write in English. Never convert Roman Urdu into formal Urdu script."
+      : u.profile.language === "ur"
+        ? "The user prefers Urdu — reply in Urdu unless they write in English."
+        : "Always reply in the same language and register as the user — if they write Roman Urdu, respond in natural Roman Urdu (never formal Urdu script unless asked).";
+  const now = new Intl.DateTimeFormat("en-US", {
+    timeZone: u.profile.timezone,
+    dateStyle: "full",
+    timeStyle: "short",
+  }).format(new Date());
+
+  return `You are Aura, ${name}'s personal AI assistant. You run entirely on infrastructure owned by the user — a self-hosted, open-source model. You are private, loyal, precise and warm.
+
+Guidelines:
+- Be concise but complete. Use Markdown (headings, lists, tables, code blocks) when it helps.
+- ${lang}
+- Current date/time for the user: ${now} (${u.profile.timezone}).
+- You have persistent long-term memory, notes, reminders, web search and file tools provided by the backend.
+- Never claim you cannot remember things if memories are provided below. Never invent personal facts.
+- If you don't know something, say so honestly.
+
+Tool protocol — when a tool is clearly required, reply with ONLY this block and nothing else:
+\`\`\`tool
+{"name": "tool_name", "args": { ... }}
+\`\`\`
+Available tools:
+${toolDescriptions}
+
+Rules: use search_web for current events / facts you are unsure about; use save_memory when the user asks to remember something or reveals a durable preference; use create_reminder for time-based tasks. Otherwise answer directly without any tool block.`;
+}
+
+async function relevantMemories(u: AuthUser, query: string): Promise<string> {
+  if (!u.profile.memoryEnabled) return "";
+  const rows = await db
+    .select()
+    .from(memories)
+    .where(eq(memories.userId, u.id))
+    .limit(300);
+  if (!rows.length) return "";
+  const q = await generateEmbedding(query);
+  const hits = topK(rows, q, 5, 0.14);
+  if (!hits.length) return "";
+  return (
+    "\n\nRelevant long-term memories about the user (use naturally, don't recite unless asked):\n" +
+    hits.map((h) => `- [${h.item.category}] ${h.item.content}`).join("\n")
+  );
+}
+
+const AI_OFFLINE_TEXT = `My language model isn't connected right now, so I can't write open-ended answers yet — but everything on your own backend still works.
+
+**Fully working without the LLM:**
+- **Reminders** — “Remind me tomorrow at 9am to call Ali”
+- **Memory** — “Remember that I prefer concise replies”
+- **Notes** — “Create a note: meeting agenda …”
+- **Web search** — “Search the web for today’s AI news”
+
+To enable full conversation, point the backend at your self-hosted model server (vLLM / Ollama / llama.cpp) with \`AI_BASE_URL\` and \`AI_MODEL\`. Details are in README → Model setup.`;
+
+export async function POST(req: Request) {
+  const rid = requestId();
+  try {
+    const u = await requireUser();
+    limited(`chat:${u.id}`, 25, 60_000);
+    const body = bodySchema.parse(await req.json());
+    const ctx: ToolContext = {
+      userId: u.id,
+      timezone: u.profile.timezone,
+      memoryEnabled: u.profile.memoryEnabled,
+    };
+
+    // ---- conversation + user message persistence --------------------------
+    let conversationId = body.conversationId;
+    let history: ChatMessage[] = [];
+    if (conversationId) {
+      const [c] = await db
+        .select({ id: conversations.id })
+        .from(conversations)
+        .where(and(eq(conversations.id, conversationId), eq(conversations.userId, u.id)))
+        .limit(1);
+      if (!c) return apiError(404, "NOT_FOUND", "Conversation not found.");
+      const rows = await db
+        .select()
+        .from(messages)
+        .where(eq(messages.conversationId, conversationId))
+        .orderBy(asc(messages.createdAt))
+        .limit(40);
+      history = rows.slice(-12).map((m) => ({
+        role: m.role === "assistant" ? ("assistant" as const) : ("user" as const),
+        content: m.content.slice(0, 4000),
+      }));
+    } else {
+      const title = body.message.replace(/\s+/g, " ").slice(0, 56) || "New conversation";
+      const [c] = await db
+        .insert(conversations)
+        .values({ userId: u.id, title })
+        .returning({ id: conversations.id });
+      conversationId = c.id;
+    }
+    const convId = conversationId!;
+
+    // ---- attachments --------------------------------------------------------
+    let attachmentContext = "";
+    const attachedImages: { dataUrl: string; name: string }[] = [];
+    let pdfWithoutText = false;
+    if (body.fileIds?.length) {
+      const rows = await db
+        .select()
+        .from(files)
+        .where(and(inArray(files.id, body.fileIds), eq(files.userId, u.id)));
+      for (const f of rows) {
+        if (IMAGE_MIMES.has(f.mime)) {
+          attachedImages.push({
+            dataUrl: `data:${f.mime};base64,${f.content.toString("base64")}`,
+            name: f.name,
+          });
+        } else if (f.extractedText) {
+          attachmentContext += `\n\n[Attached document: ${f.name}]\n${f.extractedText.slice(0, 3200)}`;
+        } else if (f.mime === "application/pdf") {
+          pdfWithoutText = true;
+        }
+      }
+    }
+
+    const [userMsg] = await db
+      .insert(messages)
+      .values({ conversationId: convId, role: "user", content: body.message })
+      .returning({ id: messages.id });
+    await db
+      .update(conversations)
+      .set({ updatedAt: new Date() })
+      .where(eq(conversations.id, convId));
+
+    // ---- SSE stream ----------------------------------------------------------
+    const encoder = new TextEncoder();
+    const started = Date.now();
+    const stream = new ReadableStream({
+      async start(controller) {
+        const send = (event: string, data: unknown) =>
+          controller.enqueue(
+            encoder.encode(`event: ${event}\ndata: ${JSON.stringify(data)}\n\n`)
+          );
+        let full = "";
+        let sources: Source[] | null = null;
+        const toolEvents: ToolEvent[] = [];
+        const pushText = (t: string) => {
+          full += t;
+          send("delta", { text: t });
+        };
+        const pushAll = (t: string) => {
+          for (let i = 0; i < t.length; i += 24) pushText(t.slice(i, i + 24));
+        };
+
+        try {
+          send("meta", { conversationId: convId, requestId: rid });
+
+          const health = await aiHealth();
+          const aiUp = health.configured && health.reachable;
+
+          // ---------- vision path -----------------------------------------
+          if (attachedImages.length) {
+            toolEvents.push({ name: "analyze_image", status: "running", detail: attachedImages[0].name });
+            send("tool", { name: "analyze_image", status: "running", label: "Analyzing image" });
+            if (!process.env.VISION_MODEL || !aiUp) {
+              toolEvents[toolEvents.length - 1].status = "error";
+              send("tool", { name: "analyze_image", status: "error", label: "Vision model not configured" });
+              pushAll(
+                `I can see you attached **${attachedImages[0].name}**, but image analysis needs a self-hosted vision model. Set \`VISION_MODEL\` (e.g. a Qwen2.5-VL or Llama 3.2 Vision server) on the AI gateway — see README → Model setup.`
+              );
+            } else {
+              try {
+                const answer = await analyzeImage(body.message, attachedImages[0].dataUrl, history);
+                toolEvents[toolEvents.length - 1].status = "ok";
+                send("tool", { name: "analyze_image", status: "ok", label: "Image analyzed" });
+                pushAll(answer || "I couldn't extract anything useful from that image.");
+              } catch (e) {
+                toolEvents[toolEvents.length - 1].status = "error";
+                send("tool", { name: "analyze_image", status: "error", label: "Vision model error" });
+                pushAll("The vision model failed to respond. Please try again.");
+              }
+            }
+          } else {
+            // ---------- deterministic intent fast-path ---------------------
+            const intent = routeIntent(body.message);
+            if (intent) {
+              toolEvents.push({ name: intent.tool, status: "running" });
+              send("tool", { name: intent.tool, status: "running", label: intent.label });
+              const out = await executeTool(intent.tool, intent.args, ctx);
+              toolEvents[toolEvents.length - 1].status = out.ok ? "ok" : "error";
+              send("tool", { name: intent.tool, status: out.ok ? "ok" : "error", label: intent.label });
+              if (out.sources?.length) {
+                sources = out.sources.map((s) => ({ title: s.title, url: s.url, snippet: s.snippet }));
+                send("sources", { items: sources });
+              }
+
+              if (intent.tool === "search_web" && out.ok && out.sources?.length && aiUp) {
+                // synthesize with the self-hosted LLM, citing sources
+                const sys = buildSystemPrompt(u);
+                const synth: ChatMessage[] = [
+                  { role: "system", content: sys },
+                  {
+                    role: "user",
+                    content: `Question: ${body.message}\n\nSearch results:\n${out.text}\n\nWrite a clear, well-structured Markdown answer. Cite sources inline like [Source Name](URL). End with a short "Sources" list.`,
+                  },
+                ];
+                try {
+                  for await (const d of streamText(synth, { maxTokens: 1200 })) pushText(d);
+                } catch {
+                  pushAll(out.text);
+                }
+              } else {
+                pushAll(out.text);
+              }
+            } else if (aiUp) {
+              // ---------- full LLM path with tool protocol -----------------
+              const memBlock = await relevantMemories(u, body.message);
+              const sys = buildSystemPrompt(u) + memBlock;
+              const chat: ChatMessage[] = [
+                { role: "system", content: sys },
+                ...history,
+                { role: "user", content: body.message + attachmentContext },
+              ];
+
+              let toolRounds = 0;
+              let proceed = true;
+              while (proceed && toolRounds < 3) {
+                proceed = false;
+                let buffer = "";
+                let decidedNotTool = false;
+                const gen = streamText(chat, { maxTokens: 2048 });
+                let block = "";
+                for await (const delta of gen) {
+                  if (!decidedNotTool) {
+                    buffer += delta;
+                    const probe = buffer.replace(/^\s+/, "");
+                    if ("```tool".startsWith(probe.slice(0, 7)) && probe.length < 7) {
+                      continue; // still ambiguous
+                    }
+                    if (probe.startsWith("```tool")) {
+                      decidedNotTool = false;
+                      buffer += ""; // keep accumulating inside tool block
+                      // switch to accumulation mode
+                      block = buffer;
+                      // consume the rest without streaming
+                      for await (const rest of gen) block += rest;
+                      break;
+                    }
+                    decidedNotTool = true;
+                    pushText(buffer);
+                    buffer = "";
+                  } else {
+                    pushText(delta);
+                  }
+                }
+                if (block) {
+                  const m = block.match(/```tool\s*([\s\S]*?)```/);
+                  let parsed: { name?: string; args?: Record<string, unknown> } | null = null;
+                  if (m) {
+                    try {
+                      parsed = JSON.parse(m[1]);
+                    } catch {
+                      parsed = null;
+                    }
+                  }
+                  if (parsed?.name) {
+                    toolRounds++;
+                    toolEvents.push({ name: parsed.name, status: "running" });
+                    send("tool", { name: parsed.name, status: "running", label: `Using ${parsed.name.replace(/_/g, " ")}` });
+                    const out = await executeTool(parsed.name, parsed.args ?? {}, ctx);
+                    toolEvents[toolEvents.length - 1].status = out.ok ? "ok" : "error";
+                    send("tool", { name: parsed.name, status: out.ok ? "ok" : "error", label: parsed.name.replace(/_/g, " ") });
+                    if (out.sources?.length) {
+                      sources = out.sources.map((s) => ({ title: s.title, url: s.url, snippet: s.snippet }));
+                      send("sources", { items: sources });
+                    }
+                    chat.push({ role: "assistant", content: block });
+                    chat.push({
+                      role: "user",
+                      content: `Tool ${parsed.name} returned:\n${out.text}\n\nNow answer the user's question using this result. Respond in Markdown.`,
+                    });
+                    proceed = true; // let the model answer with the tool result
+                  } else {
+                    pushAll(block); // wasn't a valid tool call — show raw text
+                  }
+                }
+              }
+            } else {
+              // ---------- honest offline state ------------------------------
+              let offline = AI_OFFLINE_TEXT;
+              if (pdfWithoutText)
+                offline =
+                  "This PDF didn't contain extractable embedded text (it may be scanned or encoded). TXT, MD, CSV and JSON files are analyzed inline; complex PDFs will be handled by the document-pipeline worker (see README roadmap).\n\n" +
+                  offline;
+              if (attachmentContext && aiUp === false)
+                offline =
+                  `I received your document, but the language model isn't connected, so I can't summarize it yet. Once \`AI_BASE_URL\`/\`AI_MODEL\` are set, ask again.\n\n` +
+                  offline;
+              pushAll(offline);
+            }
+          }
+
+          // ---------- persist assistant message ----------------------------
+          const [assistantMsg] = await db
+            .insert(messages)
+            .values({
+              conversationId: convId,
+              role: "assistant",
+              content: full,
+              sources,
+              toolEvents: toolEvents.length ? toolEvents : null,
+            })
+            .returning({ id: messages.id });
+          await db
+            .update(conversations)
+            .set({ updatedAt: new Date() })
+            .where(eq(conversations.id, convId));
+          await db.insert(usageEvents).values({
+            userId: u.id,
+            kind: "chat",
+            meta: {
+              rid,
+              ms: Date.now() - started,
+              approxTokens: Math.ceil(full.length / 4),
+              tools: toolEvents.map((t) => t.name),
+              aiUp: undefined,
+            },
+          });
+          logEvent({
+            msg: "chat_completed",
+            rid,
+            userId: u.id,
+            ms: Date.now() - started,
+            tools: toolEvents.map((t) => t.name),
+          });
+          send("done", { messageId: assistantMsg.id });
+        } catch (e) {
+          logEvent({
+            msg: "chat_failed",
+            rid,
+            userId: u.id,
+            error: e instanceof Error ? e.message : String(e),
+          });
+          send("error", {
+            code: "STREAM_FAILED",
+            message: "The response was interrupted. Please try again.",
+          });
+        } finally {
+          controller.close();
+        }
+      },
+    });
+
+    return new Response(stream, {
+      headers: {
+        "Content-Type": "text/event-stream; charset=utf-8",
+        "Cache-Control": "no-cache, no-transform",
+        Connection: "keep-alive",
+        "X-Accel-Buffering": "no",
+      },
+    });
+  } catch (e) {
+    if (e instanceof z.ZodError)
+      return apiError(400, "VALIDATION", e.issues.map((i) => i.message).join(", "));
+    return errResponse(e);
+  }
+}
