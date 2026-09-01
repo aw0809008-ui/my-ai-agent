@@ -47,6 +47,25 @@ prompt ─► classify task (multi-signal, deterministic) ─► capability filt
   env vars (`MODEL_GLM`, `MODEL_GLM_VISION=true`, …). Multimodal flags default to
   **false** — enable them only after confirming the capability on
   https://openrouter.ai/models. Nothing pretends a model can see images.
+- **Capability verification**: the provider's `/models` metadata (`architecture.input_modalities`,
+  `tool_support`, `supported_parameters`, `context_length`) is fetched on a short-lived cache and
+  **overrides assumptions** — a model is only used for images/audio/video/tools when OpenRouter
+  itself reports that capability. Provider-confirmed capabilities unlock automatically;
+  unconfirmed claims are ignored.
+
+**Current routing matrix** (rank 1 = primary):
+
+| Task | Chain |
+|---|---|
+| general chat | GLM → Gemma |
+| coding / debugging | MiniMax → Laguna → GLM |
+| hard reasoning | Nemotron Super → GLM → Gemma |
+| planning | Nemotron Super → GLM → MiniMax |
+| writing | GLM → Gemma |
+| summarization | Gemma → GLM |
+| agent / tool execution | GLM → MiniMax → Nemotron Super |
+| multimodal | Nemotron Omni → Gemma (only if provider-verified) |
+| current info | **web search FIRST** → synthesis: GLM (plain) / Nemotron Super (hard) / MiniMax (code) |
 - **Provider** (`src/lib/openrouter.ts`): server-side only. Timeout + exponential
   backoff (2 attempts/model) for 429/5xx/network, streamed tokens, native tool-calling
   and JSON-mode pass-through *only when the registry says the model supports them*.

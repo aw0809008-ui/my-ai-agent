@@ -67,23 +67,36 @@ interface HealthCache {
   at: number;
   reachable: boolean;
   modelIds: Set<string> | null;
+  /** actual capability metadata reported by OpenRouter, keyed by model id */
+  caps: Map<string, ProviderCaps> | null;
 }
-let healthCache: HealthCache = { at: 0, reachable: false, modelIds: null };
+let healthCache: HealthCache = { at: 0, reachable: false, modelIds: null, caps: null };
 const HEALTH_TTL_MS = 45_000;
+
+/** Capabilities as declared by the provider itself (never assumed). */
+export interface ProviderCaps {
+  inputModalities: string[];
+  outputModalities: string[];
+  toolSupport: boolean;
+  structuredSupport: boolean;
+  maxContext: number | null;
+}
 
 export async function openRouterHealth(): Promise<{
   configured: boolean;
   reachable: boolean;
   modelIds: Set<string> | null;
+  caps: Map<string, ProviderCaps> | null;
 }> {
   if (!openRouterConfigured()) {
-    return { configured: false, reachable: false, modelIds: null };
+    return { configured: false, reachable: false, modelIds: null, caps: null };
   }
   if (Date.now() - healthCache.at < HEALTH_TTL_MS) {
     return {
       configured: true,
       reachable: healthCache.reachable,
       modelIds: healthCache.modelIds,
+      caps: healthCache.caps,
     };
   }
   try {
@@ -92,18 +105,46 @@ export async function openRouterHealth(): Promise<{
       signal: AbortSignal.timeout(6000),
     });
     if (!res.ok) throw new Error(String(res.status));
-    const json = (await res.json()) as { data?: { id?: string }[] };
-    const ids = new Set<string>(
-      (json.data ?? []).map((m) => m.id ?? "").filter(Boolean)
-    );
-    healthCache = { at: Date.now(), reachable: true, modelIds: ids };
+    interface RawModel {
+      id?: string;
+      architecture?: {
+        input_modalities?: string[];
+        output_modalities?: string[];
+        tool_support?: boolean;
+      };
+      supported_parameters?: string[];
+      context_length?: number | null;
+      top_provider?: { context_length?: number | null };
+    }
+    const json = (await res.json()) as { data?: RawModel[] };
+    const ids = new Set<string>();
+    const caps = new Map<string, ProviderCaps>();
+    for (const m of json.data ?? []) {
+      if (!m.id) continue;
+      ids.add(m.id);
+      const params = m.supported_parameters ?? [];
+      caps.set(m.id, {
+        inputModalities: m.architecture?.input_modalities ?? ["text"],
+        outputModalities: m.architecture?.output_modalities ?? ["text"],
+        toolSupport:
+          m.architecture?.tool_support === true ||
+          params.includes("tools") ||
+          params.includes("tool_choice"),
+        structuredSupport:
+          params.includes("response_format") ||
+          params.includes("structured_outputs"),
+        maxContext: m.top_provider?.context_length ?? m.context_length ?? null,
+      });
+    }
+    healthCache = { at: Date.now(), reachable: true, modelIds: ids, caps };
   } catch {
-    healthCache = { at: Date.now(), reachable: false, modelIds: null };
+    healthCache = { at: Date.now(), reachable: false, modelIds: null, caps: null };
   }
   return {
     configured: true,
     reachable: healthCache.reachable,
     modelIds: healthCache.modelIds,
+    caps: healthCache.caps,
   };
 }
 

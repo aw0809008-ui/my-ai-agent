@@ -250,21 +250,22 @@ export async function POST(req: Request) {
               }
 
               if (intent.tool === "search_web" && out.ok && out.sources?.length && aiUp) {
-                // synthesize with the routed research model, citing sources
+                // Web search ran FIRST; now synthesize with the model that fits
+                // the question's complexity: plain news → GLM, hard/analytical
+                // → Nemotron Super, code-flavoured → MiniMax (via classifier).
+                const { category: synthCategory } = classifyTask(body.message, false);
                 const sys = buildSystemPrompt(u);
                 const synth: ChatMessage[] = [
                   { role: "system", content: sys },
                   {
                     role: "user",
-                    content: `Question: ${body.message}\n\nSearch results:\n${out.text}\n\nWrite a clear, well-structured Markdown answer. Cite sources inline like [Source Name](URL). End with a short "Sources" list.`,
+                    content: `Question: ${body.message}\n\nSearch results:\n${out.text}\n\nWrite a clear, well-structured Markdown answer grounded in these results. Cite sources inline like [Source Name](URL). End with a short "Sources" list.`,
                   },
                 ];
                 try {
-                  for await (const d of routed(synth, "web_research", 1200)) pushText(d);
-                } catch (e) {
-                  if (e instanceof Error && e.message === "ALL_MODELS_UNAVAILABLE")
-                    pushAll(out.text);
-                  else pushAll(out.text);
+                  for await (const d of routed(synth, synthCategory, 1200)) pushText(d);
+                } catch {
+                  pushAll(out.text); // raw results are still a valid answer
                 }
               } else {
                 pushAll(out.text);

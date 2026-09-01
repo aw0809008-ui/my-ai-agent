@@ -27,6 +27,7 @@ import {
   streamOnce,
   OpenRouterError,
   type APIMessage,
+  type ProviderCaps,
   imageMessage,
 } from "@/lib/openrouter";
 import { logEvent } from "@/lib/http";
@@ -122,6 +123,36 @@ interface SelectOptions {
   estimatedTokens?: number;
   /** live availability from health check (null = unknown/optimistic) */
   availableIds?: Set<string> | null;
+  /** provider-reported capabilities (null = metadata unavailable) */
+  providerCaps?: Map<string, ProviderCaps> | null;
+}
+
+/** Effective capability = env declaration VERIFIED against provider metadata.
+ *  A capability is usable only when the provider actually reports it; a
+ *  provider-confirmed capability unlocks even without an explicit env flag. */
+function effectiveCaps(meta: ModelMeta, caps?: ProviderCaps | null) {
+  if (!caps) {
+    // metadata unavailable: trust env declarations only (conservative)
+    return {
+      vision: meta.supportsVision,
+      audio: meta.supportsAudio,
+      video: meta.supportsVideo,
+      tools: meta.supportsTools,
+      structured: meta.supportsStructuredOutput,
+      maxContext: meta.maxContext,
+      verified: false,
+    };
+  }
+  const has = (list: string[], mod: string) => list.includes(mod);
+  return {
+    vision: has(caps.inputModalities, "image"),
+    audio: has(caps.inputModalities, "audio"),
+    video: has(caps.inputModalities, "video"),
+    tools: caps.toolSupport,
+    structured: caps.structuredSupport,
+    maxContext: caps.maxContext ?? meta.maxContext,
+    verified: true,
+  };
 }
 
 function rankForTask(meta: ModelMeta, category: TaskCategory): number {
@@ -144,11 +175,21 @@ export function selectModels(
   const estimated = opts.estimatedTokens ?? 0;
   const drop: string[] = [];
   const candidates = enabledModels().filter((m) => {
-    if (opts.requiresVision && !m.supportsVision) return false;
-    if (opts.requiresAudio && !m.supportsAudio) return false;
-    if (opts.requiresVideo && !m.supportsVideo) return false;
-    if (opts.requiresTools && !m.supportsTools) return false;
-    if (estimated > 0 && m.maxContext < estimated * 1.25) return false;
+    const caps = effectiveCaps(m, opts.providerCaps?.get(m.openRouterId) ?? null);
+    if (opts.requiresVision && !caps.vision) {
+      drop.push(`${m.key}: no image input${caps.verified ? " (provider-verified)" : ""}`);
+      return false;
+    }
+    if (opts.requiresAudio && !caps.audio) return false;
+    if (opts.requiresVideo && !caps.video) return false;
+    if (opts.requiresTools && !caps.tools) {
+      drop.push(`${m.key}: no tool support`);
+      return false;
+    }
+    if (estimated > 0 && caps.maxContext < estimated * 1.25) {
+      drop.push(`${m.key}: context too small (${caps.maxContext})`);
+      return false;
+    }
     if (opts.availableIds && !opts.availableIds.has(m.openRouterId)) {
       drop.push(`${m.key}: not listed by provider`);
       return false;
@@ -208,12 +249,14 @@ export function streamBest(
       const health = await openRouterHealth().catch(() => ({
         configured: true,
         reachable: false,
-        modelIds: null,
+        modelIds: null as Set<string> | null,
+        caps: null as Map<string, ProviderCaps> | null,
       }));
       const { best, chain } = selectModels(category, {
         requiresTools: opts.requiresTools,
         estimatedTokens,
         availableIds: health.reachable ? health.modelIds : null, // optimistic when health unknown
+        providerCaps: health.reachable ? health.caps : null,
       });
       const sequence = best ? [best, ...chain] : [];
       let emitted = false;
@@ -316,9 +359,17 @@ export async function visionAnswer(
   history: ChatMessage[] = []
 ): Promise<VisionResult> {
   if (openRouterConfigured()) {
-    const { best, chain } = selectModels("image_understanding", { requiresVision: true });
+    const health = await openRouterHealth();
+    const { best, chain, drop } = selectModels("image_understanding", {
+      requiresVision: true,
+      availableIds: health.reachable ? health.modelIds : null,
+      providerCaps: health.reachable ? health.caps : null,
+    });
     const sequence = best ? [best, ...chain] : [];
-    if (sequence.length === 0) throw new Error("VISION_NOT_CONFIGURED");
+    if (sequence.length === 0) {
+      if (drop.length) logEvent({ msg: "vision_no_candidate", drop });
+      throw new Error("VISION_NOT_CONFIGURED");
+    }
     const messages: APIMessage[] = [
       ...history.slice(-3).map((m) => ({ role: m.role, content: m.content })),
       imageMessage(question, imageDataUrl),

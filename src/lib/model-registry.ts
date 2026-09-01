@@ -73,12 +73,19 @@ interface ModelDefault {
 
 // Defaults reflect the owner's intended roles. IDs + every flag stay
 // overridable via env; multimodal stays OFF unless explicitly enabled.
+// Routing matrix (rank 1 = primary for that task). Derived from the owner's
+// routing rules:
+//   general: GLM → Gemma | coding/debugging: MiniMax → Laguna → GLM
+//   hard reasoning: Nemotron Super → GLM → Gemma | planning: Nemotron → GLM → MiniMax
+//   writing: GLM → Gemma | summarization: Gemma → GLM
+//   agent/tools: GLM → MiniMax → Nemotron | multimodal: Omni → Gemma(if verified)
+//   web research synthesis: GLM → Nemotron (MiniMax via coding classification)
 const DEFAULTS: ModelDefault[] = [
   {
     key: "glm",
     displayName: "GLM 5.2",
     envVar: "MODEL_GLM",
-    taskTypes: { coding: 1, debugging: 1, tool_execution: 1, planning: 2, reasoning: 2, structured_output: 2, general_chat: 3, file_analysis: 3, writing: 4, summarization: 4, research: 3, web_research: 3 },
+    taskTypes: { general_chat: 1, coding: 3, debugging: 3, tool_execution: 1, planning: 2, reasoning: 2, structured_output: 2, file_analysis: 3, writing: 1, summarization: 2, research: 1, web_research: 1 },
     tools: true,
     structured: true,
     reasoning: true,
@@ -89,7 +96,7 @@ const DEFAULTS: ModelDefault[] = [
     key: "minimax",
     displayName: "MiniMax M2.5",
     envVar: "MODEL_MINIMAX",
-    taskTypes: { coding: 2, debugging: 2, tool_execution: 2, planning: 3, reasoning: 4, general_chat: 4, file_analysis: 4, structured_output: 3, research: 5, web_research: 5, writing: 6, summarization: 5 },
+    taskTypes: { coding: 1, debugging: 1, tool_execution: 2, planning: 3, reasoning: 5, general_chat: 4, file_analysis: 4, structured_output: 3, research: 5, web_research: 3, writing: 6, summarization: 5 },
     tools: true,
     structured: true,
     reasoning: false,
@@ -100,7 +107,7 @@ const DEFAULTS: ModelDefault[] = [
     key: "nemotron_super",
     displayName: "Nemotron 3 Super",
     envVar: "MODEL_NEMOTRON_SUPER",
-    taskTypes: { reasoning: 1, planning: 1, research: 2, web_research: 2, coding: 4, debugging: 4, general_chat: 5, tool_execution: 3, structured_output: 3, writing: 5, summarization: 4, file_analysis: 5 },
+    taskTypes: { reasoning: 1, planning: 1, research: 2, web_research: 2, coding: 5, debugging: 5, general_chat: 5, tool_execution: 3, structured_output: 3, writing: 5, summarization: 4, file_analysis: 5 },
     tools: true,
     structured: true,
     reasoning: true,
@@ -122,7 +129,7 @@ const DEFAULTS: ModelDefault[] = [
     key: "gemma",
     displayName: "Gemma 4 31B",
     envVar: "MODEL_GEMMA",
-    taskTypes: { general_chat: 1, writing: 1, summarization: 1, reasoning: 5, web_research: 3, research: 6, coding: 7, debugging: 7, planning: 6, tool_execution: 6, file_analysis: 6, structured_output: 6 },
+    taskTypes: { general_chat: 2, writing: 2, summarization: 1, reasoning: 3, web_research: 4, research: 6, coding: 7, debugging: 7, planning: 5, tool_execution: 6, file_analysis: 6, structured_output: 6, image_understanding: 2 },
     tools: false,
     structured: false,
     reasoning: false,
@@ -136,8 +143,8 @@ const DEFAULTS: ModelDefault[] = [
     taskTypes: { image_understanding: 1, audio_understanding: 1, video_understanding: 1, general_chat: 8, summarization: 6, file_analysis: 7 },
     tools: false,
     structured: false,
-    reasoning: false,
-    maxContext: 32_768,
+    reasoning: true,
+    maxContext: 128_000,
     fallbackPriority: 6,
   },
   {
@@ -155,7 +162,7 @@ const DEFAULTS: ModelDefault[] = [
     key: "laguna",
     displayName: "Laguna XS.2",
     envVar: "MODEL_LAGUNA",
-    taskTypes: { coding: 6, debugging: 5, tool_execution: 5, planning: 6, reasoning: 7, general_chat: 7, structured_output: 5 },
+    taskTypes: { coding: 2, debugging: 2, tool_execution: 4, planning: 6, reasoning: 7, general_chat: 7, structured_output: 5 },
     tools: true,
     structured: false,
     reasoning: false,
@@ -185,7 +192,10 @@ export function getRegistry(): ModelMeta[] {
       supportsTools: envFlag(`${p}_TOOLS`, d.tools),
       supportsStructuredOutput: envFlag(`${p}_STRUCTURED`, d.structured),
       supportsReasoning: envFlag(`${p}_REASONING`, d.reasoning),
-      maxContext: d.maxContext,
+      maxContext: (() => {
+        const n = parseInt(process.env[`${p}_CONTEXT`] ?? "", 10);
+        return Number.isFinite(n) && n > 0 ? n : d.maxContext;
+      })(),
       fallbackPriority: d.fallbackPriority,
     };
   });
