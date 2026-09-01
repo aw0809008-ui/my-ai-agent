@@ -262,7 +262,8 @@ export default function MemoryPage() {
       )}
 
       {/* lists */}
-      <div className="min-h-0 flex-1 overflow-y-auto px-5 pb-32 slim-scroll">
+      <div className="min-h-0 flex-1 overflow-y-auto px-5 pb-32 slim-scroll lg:pb-14 lg:px-8">
+        <div className="lg:mx-auto lg:w-full lg:max-w-[900px]">
         {tab === "memories" ? (
           memLoading ? (
             <div className="flex justify-center pt-14">
@@ -279,7 +280,7 @@ export default function MemoryPage() {
               }
             />
           ) : (
-            <div className="mt-2 grid gap-2.5">
+            <div className="mt-2 grid gap-2.5 lg:grid-cols-2">
               {mems.map((m, i) => (
                 <motion.div
                   key={m.id}
@@ -365,8 +366,8 @@ export default function MemoryPage() {
               </Pressable>
             }
           />
-        ) : (
-          <div className="mt-2 grid gap-2.5">
+          ) : (
+          <div className="mt-2 grid gap-2.5 lg:grid-cols-2">
             {notesList.map((n, i) => (
               <motion.div
                 key={n.id}
@@ -425,6 +426,7 @@ export default function MemoryPage() {
             ))}
           </div>
         )}
+        </div>
       </div>
 
       {/* memory sheet */}

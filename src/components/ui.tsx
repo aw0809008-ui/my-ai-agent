@@ -109,7 +109,7 @@ export function Sheet({
             animate={{ y: 0 }}
             exit={{ y: "100%" }}
             transition={{ type: "spring", stiffness: 380, damping: 38 }}
-            className="fixed inset-x-0 bottom-0 z-50 mx-auto w-full max-w-[430px] rounded-t-3xl border-t border-line bg-abyss pb-safe"
+            className="fixed inset-x-0 bottom-0 z-50 mx-auto w-full max-w-[430px] rounded-t-3xl border-t border-line bg-abyss pb-safe md:max-w-[540px]"
           >
             <div className="mx-auto mt-2.5 h-1 w-9 rounded-full bg-line" />
             <div className="flex items-center justify-between px-5 pt-3 pb-2">

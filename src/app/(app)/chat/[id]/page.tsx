@@ -283,7 +283,8 @@ function ChatRoomInner({ id }: { id: string }) {
   return (
     <div className="relative flex h-full flex-col">
       {/* header */}
-      <div className="z-10 flex items-center gap-2 border-b border-line/60 bg-void/80 px-3 py-2.5 backdrop-blur-xl">
+      <div className="z-10 flex items-center gap-2 border-b border-line/60 bg-void/80 px-3 py-2.5 backdrop-blur-xl lg:px-6">
+        <div className="mx-auto flex w-full max-w-[820px] items-center gap-2">
         <Pressable
           onClick={() => router.push("/chat")}
           className="grid h-9 w-9 shrink-0 place-items-center rounded-full text-mist hover:bg-elev hover:text-frost"
@@ -350,11 +351,12 @@ function ChatRoomInner({ id }: { id: string }) {
             <Volume2 size={17} />
           </Pressable>
         )}
+        </div>
       </div>
 
       {/* messages */}
       <div ref={scrollRef} onScroll={onScroll} className="min-h-0 flex-1 overflow-y-auto slim-scroll">
-        <div className="flex flex-col gap-5 px-4 pt-5 pb-40">
+        <div className="flex flex-col gap-5 px-4 pt-5 pb-40 lg:mx-auto lg:w-full lg:max-w-[820px] lg:pb-8 lg:px-8">
           {nextCursor && (
             <div className="flex justify-center">
               <Pressable
@@ -379,7 +381,7 @@ function ChatRoomInner({ id }: { id: string }) {
                   Streaming answers · tools · memory · sources
                 </p>
               </div>
-              <div className="flex w-full flex-col gap-2">
+              <div className="flex w-full flex-col gap-2 lg:grid lg:grid-cols-2">
                 {SUGGESTIONS.map((s, i) => (
                   <motion.div
                     key={s}

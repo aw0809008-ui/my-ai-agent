@@ -30,7 +30,7 @@ export default function Welcome() {
   }, [router]);
 
   return (
-    <div className="relative mx-auto flex min-h-dvh w-full max-w-[430px] flex-col overflow-hidden px-6">
+    <div className="relative mx-auto flex min-h-dvh w-full max-w-[430px] flex-col overflow-hidden px-6 md:max-w-[520px]">
       {/* ambient background */}
       <div
         className="pointer-events-none absolute inset-0"

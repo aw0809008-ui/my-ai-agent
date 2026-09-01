@@ -77,8 +77,9 @@ export default function SettingsPage() {
   };
 
   return (
-    <div className="h-full overflow-y-auto pb-36 slim-scroll">
+    <div className="h-full overflow-y-auto pb-36 slim-scroll lg:pb-14">
       <PageHeader title="Settings" subtitle="Your AI, your rules" />
+      <div className="lg:mx-auto lg:w-full lg:max-w-[860px] lg:grid lg:grid-cols-2 lg:gap-x-5 lg:items-start">
 
       {/* profile */}
       <Section icon={User} title="Profile">
@@ -472,7 +473,7 @@ export default function SettingsPage() {
         </div>
       </Section>
 
-      <div className="px-5">
+      <div className="px-5 lg:col-span-2 lg:max-w-[440px] lg:mx-auto lg:w-full">
         <Pressable
           onClick={signOut}
           className="flex w-full items-center justify-center gap-2 rounded-2xl border border-danger/30 bg-danger/10 py-3.5 text-[14px] font-semibold text-danger"
@@ -482,6 +483,7 @@ export default function SettingsPage() {
         <p className="mt-4 text-center text-[10.5px] text-faint">
           Your data stays on infrastructure you control.
         </p>
+      </div>
       </div>
     </div>
   );

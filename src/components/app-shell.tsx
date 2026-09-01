@@ -184,7 +184,7 @@ export function AppShell({ children }: { children: ReactNode }) {
 
   return (
     <Ctx.Provider value={{ user, settings, ai, refresh: load, patchProfile, toast }}>
-      <div className="relative mx-auto flex h-dvh w-full max-w-[430px] flex-col overflow-hidden border-x border-line/50 bg-void">
+      <div className="relative mx-auto flex h-dvh w-full max-w-[430px] flex-col overflow-hidden border-x border-line/50 bg-void md:max-w-none md:border-0 lg:pl-[84px]">
         {/* due reminder banners */}
         <AnimatePresence>
           {due.map((r) => (
@@ -193,7 +193,7 @@ export function AppShell({ children }: { children: ReactNode }) {
               initial={{ y: -80, opacity: 0 }}
               animate={{ y: 0, opacity: 1 }}
               exit={{ y: -80, opacity: 0 }}
-              className="absolute inset-x-3 top-3 z-40 rounded-2xl border border-violet/30 bg-elev/95 p-3.5 shadow-2xl shadow-violet/10 backdrop-blur-xl"
+              className="absolute inset-x-3 top-3 z-40 rounded-2xl border border-violet/30 bg-elev/95 p-3.5 shadow-2xl shadow-violet/10 backdrop-blur-xl lg:right-6 lg:left-auto lg:w-[420px]"
             >
               <div className="flex items-start gap-3">
                 <div className="grid h-9 w-9 shrink-0 place-items-center rounded-xl bg-violet/15 text-violet">
@@ -254,7 +254,7 @@ export function AppShell({ children }: { children: ReactNode }) {
               initial={{ y: 30, opacity: 0 }}
               animate={{ y: 0, opacity: 1 }}
               exit={{ y: 30, opacity: 0 }}
-              className="pointer-events-none fixed bottom-24 left-1/2 z-50 w-full max-w-[430px] -translate-x-1/2 px-6"
+              className="pointer-events-none fixed bottom-24 left-1/2 z-50 w-full max-w-[430px] -translate-x-1/2 px-6 lg:bottom-10"
             >
               <div className="mx-auto w-fit rounded-full border border-line bg-elev/95 px-4 py-2 text-[13px] text-frost shadow-xl backdrop-blur-xl">
                 {toastMsg}

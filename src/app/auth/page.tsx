@@ -66,7 +66,7 @@ function AuthInner() {
   };
 
   return (
-    <div className="relative mx-auto flex min-h-dvh w-full max-w-[430px] flex-col px-6 pt-safe">
+    <div className="relative mx-auto flex min-h-dvh w-full max-w-[430px] flex-col px-6 pt-safe md:max-w-[480px]">
       <div
         className="pointer-events-none absolute inset-0"
         style={{

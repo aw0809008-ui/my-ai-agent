@@ -160,7 +160,8 @@ export default function ChatListPage() {
         </div>
       </div>
 
-      <div className="min-h-0 flex-1 overflow-y-auto px-5 pb-32 slim-scroll">
+      <div className="min-h-0 flex-1 overflow-y-auto px-5 pb-32 slim-scroll lg:pb-14 lg:px-8">
+        <div className="lg:mx-auto lg:w-full lg:max-w-[840px]">
         {loading ? (
           <div className="flex justify-center pt-16">
             <Spinner className="h-6 w-6" />
@@ -310,6 +311,7 @@ export default function ChatListPage() {
             </Pressable>
           </div>
         )}
+        </div>
       </div>
     </div>
   );

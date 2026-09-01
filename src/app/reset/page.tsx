@@ -37,7 +37,7 @@ function ResetInner() {
   };
 
   return (
-    <div className="mx-auto flex min-h-dvh w-full max-w-[430px] flex-col px-6 pt-safe">
+    <div className="mx-auto flex min-h-dvh w-full max-w-[430px] flex-col px-6 pt-safe md:max-w-[480px]">
       <div className="mt-14 flex justify-center">
         <Orb state={done ? "responding" : "idle"} size={110} />
       </div>

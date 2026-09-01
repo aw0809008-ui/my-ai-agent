@@ -77,9 +77,9 @@ export default function HomePage() {
   const firstName = user.displayName.split(" ")[0] || "there";
 
   return (
-    <div className="h-full overflow-y-auto px-5 pb-32 slim-scroll">
+    <div className="h-full overflow-y-auto px-5 pb-32 slim-scroll lg:pb-14 lg:px-10">
       {/* header */}
-      <div className="flex items-center justify-between pt-8">
+      <div className="flex items-center justify-between pt-8 lg:mx-auto lg:max-w-[880px]">
         <div>
           <p className="text-[13px] text-mist">
             {new Intl.DateTimeFormat("en-US", {
@@ -100,15 +100,16 @@ export default function HomePage() {
         )}
       </div>
 
+      <div className="lg:mx-auto lg:max-w-[880px]">
       {/* orb */}
-      <div className="mt-4 flex flex-col items-center">
-        <motion.div whileTap={{ scale: 0.97 }}>
+      <div className="mt-4 flex flex-col items-center lg:mt-8">
+        <motion.div whileTap={{ scale: 0.97 }} className="lg:scale-110">
           <Orb
             state={orbTap ? "thinking" : ai.reachable ? "idle" : "offline"}
             size={196}
           />
         </motion.div>
-        <p className="mt-4 text-center font-display text-[18px] font-medium text-frost">
+        <p className="mt-4 text-center font-display text-[18px] font-medium text-frost lg:text-[22px]">
           What can I help you with?
         </p>
         <p className="mt-1 text-center text-[12.5px] text-faint">
@@ -117,7 +118,7 @@ export default function HomePage() {
       </div>
 
       {/* quick actions */}
-      <div className="mt-7 grid grid-cols-3 gap-2.5">
+      <div className="mt-7 grid grid-cols-3 gap-2.5 lg:grid-cols-6 lg:gap-3 lg:mt-9">
         {QUICK.map((q, i) => (
           <motion.div
             key={q.label}
@@ -136,11 +137,12 @@ export default function HomePage() {
         ))}
       </div>
 
-      {/* upcoming reminder */}
+      {/* upcoming reminder + memory insight side by side on desktop */}
+      <div className="lg:grid lg:grid-cols-2 lg:gap-3 lg:mt-6">
       {nextReminder && (
         <Pressable
           onClick={() => router.push("/tasks")}
-          className="gradient-border mt-6 flex w-full items-center gap-3 rounded-2xl bg-card p-4 text-left"
+          className="gradient-border mt-6 flex w-full items-center gap-3 rounded-2xl bg-card p-4 text-left lg:mt-0"
         >
           <div className="grid h-10 w-10 shrink-0 place-items-center rounded-xl bg-amber/15 text-amber">
             <AlarmClock size={18} />
@@ -160,7 +162,6 @@ export default function HomePage() {
         </Pressable>
       )}
 
-      {/* memory insight */}
       {user.memoryEnabled && memCount !== null && (
         <Pressable
           onClick={() => router.push("/memory")}
@@ -182,6 +183,7 @@ export default function HomePage() {
           <ArrowRight size={16} className="shrink-0 text-faint" />
         </Pressable>
       )}
+      </div>
 
       {/* recent conversations */}
       <div className="mt-7">
@@ -227,6 +229,7 @@ export default function HomePage() {
             ))}
           </div>
         )}
+      </div>
       </div>
     </div>
   );

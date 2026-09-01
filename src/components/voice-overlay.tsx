@@ -198,7 +198,7 @@ export function VoiceOverlay({
           initial={{ opacity: 0 }}
           animate={{ opacity: 1 }}
           exit={{ opacity: 0 }}
-          className="fixed inset-0 z-50 mx-auto flex w-full max-w-[430px] flex-col bg-void/95 backdrop-blur-2xl"
+          className="fixed inset-0 z-50 mx-auto flex w-full max-w-[430px] flex-col bg-void/95 backdrop-blur-2xl md:max-w-[560px]"
         >
           <div
             className="pointer-events-none absolute inset-0"
