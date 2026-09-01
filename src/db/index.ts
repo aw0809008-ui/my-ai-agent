@@ -16,8 +16,11 @@ function init(): NodePgDatabase {
   if (!databaseUrl) {
     throw new Error("DATABASE_URL is required");
   }
+  // Managed Postgres (Supabase/Neon/etc.) requires SSL; local dev does not.
+  const isLocal = /(localhost|127\.0\.0\.1)/.test(databaseUrl);
   const pool = new Pool({
     connectionString: databaseUrl,
+    ssl: isLocal ? undefined : { rejectUnauthorized: false },
     // serverless-friendly: short idle timeout, dont hoard connections
     max: 5,
     idleTimeoutMillis: 20_000,
