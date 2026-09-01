@@ -184,7 +184,7 @@ export function AppShell({ children }: { children: ReactNode }) {
 
   return (
     <Ctx.Provider value={{ user, settings, ai, refresh: load, patchProfile, toast }}>
-      <div className="relative mx-auto flex h-dvh w-full max-w-[430px] flex-col overflow-hidden border-x border-line/50 bg-void md:max-w-none md:border-0 lg:pl-[84px]">
+      <div className="app-frame relative mx-auto flex w-full max-w-[430px] flex-col overflow-hidden border-x border-line/50 bg-void md:max-w-none md:border-0 lg:pl-[84px]">
         {/* due reminder banners */}
         <AnimatePresence>
           {due.map((r) => (

@@ -200,3 +200,9 @@ html, body {
 /* safe areas */
 .pb-safe { padding-bottom: env(safe-area-inset-bottom, 0px); }
 .pt-safe { padding-top: env(safe-area-inset-top, 0px); }
+
+/* full-viewport app frame with dvh fallback (older mobile browsers) */
+.app-frame {
+  height: 100vh;
+  height: 100dvh;
+}

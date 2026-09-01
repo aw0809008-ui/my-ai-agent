@@ -281,7 +281,7 @@ function ChatRoomInner({ id }: { id: string }) {
   }
 
   return (
-    <div className="relative flex h-full flex-col">
+    <div className="relative flex h-full min-h-0 flex-col">
       {/* header */}
       <div className="z-10 flex items-center gap-2 border-b border-line/60 bg-void/80 px-3 py-2.5 backdrop-blur-xl lg:px-6">
         <div className="mx-auto flex w-full max-w-[820px] items-center gap-2">
@@ -354,9 +354,10 @@ function ChatRoomInner({ id }: { id: string }) {
         </div>
       </div>
 
-      {/* messages */}
-      <div ref={scrollRef} onScroll={onScroll} className="min-h-0 flex-1 overflow-y-auto slim-scroll">
-        <div className="flex flex-col gap-5 px-4 pt-5 pb-40 lg:mx-auto lg:w-full lg:max-w-[820px] lg:pb-8 lg:px-8">
+      {/* messages — the ONLY scrolling region; height comes from flex-1 min-h-0,
+          so the page itself never grows and the composer never moves */}
+      <div ref={scrollRef} onScroll={onScroll} className="min-h-0 flex-1 overflow-y-auto overscroll-contain slim-scroll">
+        <div className="flex flex-col gap-5 px-4 pt-5 pb-6 md:pb-8 lg:mx-auto lg:w-full lg:max-w-[820px] lg:px-8">
           {nextCursor && (
             <div className="flex justify-center">
               <Pressable

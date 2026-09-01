@@ -104,7 +104,10 @@ export const Composer = forwardRef<ComposerHandle, Props>(function Composer(
   const empty = text.trim().length === 0 && files.length === 0;
 
   return (
-    <div className="pointer-events-none absolute inset-x-0 bottom-0 z-20 px-3 pb-3 md:px-6 lg:pb-5">
+    // In-flow flex child of the chat column — always visible at the bottom,
+    // never pushed by message content, never hidden behind the mobile tab bar
+    // (the bottom padding clears the fixed tab bar; desktop rail resets it).
+    <div className="pointer-events-none shrink-0 bg-gradient-to-t from-void via-void/80 to-transparent px-3 pt-2 pb-[calc(78px+env(safe-area-inset-bottom,0px))] md:px-6 lg:pt-3 lg:pb-5">
       <div className="pointer-events-auto mx-auto w-full max-w-[780px] rounded-[26px] border border-line glass p-2 shadow-2xl shadow-black/40 transition-all duration-300 focus-within:border-violet/50 focus-within:shadow-violet/10">
         {/* attachment chips */}
         <AnimatePresence>
