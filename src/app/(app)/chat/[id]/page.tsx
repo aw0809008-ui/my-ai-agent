@@ -54,6 +54,7 @@ function ChatRoomInner({ id }: { id: string }) {
   const scrollRef = useRef<HTMLDivElement>(null);
   const stickRef = useRef(true);
   const busyRef = useRef(false);
+  const lastBotRef = useRef<string | null>(null);
 
   // initial load
   useEffect(() => {
@@ -158,7 +159,9 @@ function ChatRoomInner({ id }: { id: string }) {
         ]);
       }
       setMessages((prev) => [
-        ...prev.filter((m) => !(isRetry && m.id === botId)),
+        // on retry, replace the PREVIOUS failed/empty assistant placeholder
+        // (bug: old code filtered by the brand-new botId, so it never matched)
+        ...prev.filter((m) => !(isRetry && m.id === lastBotRef.current)),
         {
           id: botId,
           role: "assistant",
@@ -168,6 +171,7 @@ function ChatRoomInner({ id }: { id: string }) {
           createdAt: new Date().toISOString(),
         },
       ]);
+      lastBotRef.current = botId;
       stickRef.current = true;
 
       const patchBot = (fn: (m: ChatMsg) => ChatMsg) =>

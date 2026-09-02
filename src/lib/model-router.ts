@@ -57,7 +57,7 @@ const WORD_SIGNALS: Signal[] = [
   { category: "web_research", pattern: /\b(latest|current(ly)?|today('s)?|this week|news|recent(ly)?|price of|who won|breaking|202[45-9])\b/gi, weight: 2.5 },
   { category: "planning", pattern: /\b(plan|roadmap|steps? to|schedule|strategy|milestone|timeline|itinerary|checklist|organize)\b/gi, weight: 2 },
   { category: "writing", pattern: /\b(write|draft|essay|email|blog|article|story|poem|letter|caption|rewrite|paraphrase|translate)\b/gi, weight: 2 },
-  { category: "summarization", pattern: /\b(summar(i|y|ze|se)|tl;?dr|key points|condense|brief|shorten|main idea)\b/gi, weight: 3 },
+  { category: "summarization", pattern: /\b(summar\w*|tl;?dr|key points|condense|brief(ly)?|shorten|main idea)\b/gi, weight: 3 },
 ];
 
 const CODE_SYNTAX = /(```|=>|\{|\}|\(\)|;|::|\/\/|#include|const |let |var |def |import |function |class |console\.\w+|<\/>|<\w+>)/g;
@@ -202,7 +202,8 @@ export function selectModels(
   const sorted = [...candidates].sort(
     (a, b) => rankForTask(a, category) - rankForTask(b, category)
   );
-  return { best: sorted[0] ?? null, chain: sorted.slice(1, 4), drop };
+  // max 3 models total (best + 2 fallbacks) — free-tier friendly, no fan-out
+  return { best: sorted[0] ?? null, chain: sorted.slice(1, 3), drop };
 }
 
 function estimateTokens(messages: ChatMessage[]): number {

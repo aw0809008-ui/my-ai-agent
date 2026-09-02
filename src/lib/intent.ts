@@ -145,7 +145,10 @@ export function routeIntent(raw: string): IntentCall | null {
   }
   if (
     /(latest|today'?s|recent|current|breaking)\s+(news|headlines|updates)/.test(t) ||
-    /^news\b/.test(t)
+    /^news\b/.test(t) ||
+    // time-sensitive information seekers — web search must come first
+    /^what('s| is|’s)? happened( today| this week| recently| now)?\b/.test(t) ||
+    /\b(today'??s headlines|current affairs|latest prices?|stock (price|market) (today|now)|weather (today|now)|today'??s weather)\b/.test(t)
   ) {
     return {
       tool: "search_web",

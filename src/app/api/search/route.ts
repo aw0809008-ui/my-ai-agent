@@ -10,8 +10,18 @@ export async function POST(req: Request) {
     const u = await requireUser();
     limited(`search:${u.id}`, 15, 60_000);
     const { query } = schema.parse(await req.json());
-    const { results, provider } = await webSearch(query, 8);
-    return Response.json({ results, provider });
+    const { results, provider, failures } = await webSearch(query, 8);
+    return Response.json({
+      results,
+      provider,
+      // safe, sanitized explanation when nothing came back
+      reason:
+        results.length === 0
+          ? failures.length
+            ? `search providers temporarily unavailable (${failures.join(", ")})`
+            : "no results found"
+          : null,
+    });
   } catch (e) {
     if (e instanceof z.ZodError)
       return apiError(400, "VALIDATION", "Query must be at least 2 characters.");

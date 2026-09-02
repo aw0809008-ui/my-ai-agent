@@ -150,8 +150,32 @@ const defs: ToolDef[] = [
         .select()
         .from(memories)
         .where(eq(memories.userId, ctx.userId));
+      if (!rows.length) return { ok: true, text: "You have no saved memories yet." };
+      // Retrieval bug fix: generic recall queries ("me", "everything", "what do
+      // you know") embed to nothing meaningful. When a query carries <3 content
+      // tokens, fall back to importance+recency instead of a semantic threshold
+      // that can never be passed.
+      const STOP = new Set(["about", "the", "me", "my", "mine", "you", "your", "what", "know", "remember", "everything", "all", "do", "does", "a", "an", "of", "for", "it", "is", "are", "and", "or", "memories", "memory"]);
+      const tokens = query
+        .toLowerCase()
+        .replace(/[^a-z0-9\s]/g, " ")
+        .split(/\s+/)
+        .filter((t: string) => t.length > 2 && !STOP.has(t));
+      const n = limit ?? 5;
+      if (tokens.length < 3) {
+        const recent = [...rows]
+          .sort((a, b) => b.importance - a.importance || b.updatedAt.getTime() - a.updatedAt.getTime())
+          .slice(0, Math.max(n, 8));
+        return {
+          ok: true,
+          text:
+            "Memories (most important/recent):\n" +
+            recent.map((m, i) => `${i + 1}. [${m.category}] ${m.content}`).join("\n"),
+          data: recent.map((m) => ({ id: m.id, category: m.category, content: m.content })),
+        };
+      }
       const q = await generateEmbedding(query);
-      const hits = topK(rows, q, limit ?? 5, 0.08);
+      const hits = topK(rows, q, n, 0.08);
       if (!hits.length)
         return { ok: true, text: "No relevant memories found." };
       return {

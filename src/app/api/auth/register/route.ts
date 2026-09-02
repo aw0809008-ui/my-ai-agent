@@ -38,6 +38,22 @@ export async function POST(req: Request) {
       .values({ email: body.email, passwordHash, role })
       .returning({ id: users.id, email: users.email, role: users.role });
 
+    // Race-safe admin guarantee: if concurrent first-signups all computed
+    // role='user' (both counted > 0), promote the earliest user so at least one
+    // admin exists. Never revokes an existing admin.
+    await db.execute(
+      sql`UPDATE users SET role = 'admin'
+          WHERE role = 'user'
+            AND id = (SELECT id FROM users ORDER BY created_at ASC LIMIT 1)
+            AND (SELECT count(*) FROM users WHERE role = 'admin') = 0`
+    );
+    await db.execute(
+      sql`UPDATE users SET role = 'admin'
+          WHERE role = 'user'
+            AND id = (SELECT id FROM users ORDER BY created_at ASC LIMIT 1)
+            AND (SELECT count(*) FROM users WHERE role = 'admin') = 0`
+    );
+
     // Non-fatal: profile rows self-heal on first authenticated request.
     try {
       await ensureProfileRows(user.id);

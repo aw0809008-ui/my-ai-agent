@@ -2,7 +2,7 @@ import { cookies, headers } from "next/headers";
 import { createHash, randomBytes } from "crypto";
 import { db } from "@/db";
 import { users, sessions, profiles, userSettings } from "@/db/schema";
-import { and, eq, gt } from "drizzle-orm";
+import { and, eq, gt, lt } from "drizzle-orm";
 import { ApiError } from "@/lib/http";
 
 export const SESSION_COOKIE = "aura_session";
@@ -16,6 +16,12 @@ export async function createSession(userId: string): Promise<string> {
   const token = randomBytes(32).toString("base64url");
   const expiresAt = new Date(Date.now() + SESSION_DAYS * 86_400_000);
   await db.insert(sessions).values({ tokenHash: sha256(token), userId, expiresAt });
+  // Session hygiene: opportunistically purge expired sessions for this user
+  // (bounded cost; avoids unbounded table growth on serverless).
+  await db
+    .delete(sessions)
+    .where(and(eq(sessions.userId, userId), lt(sessions.expiresAt, new Date())))
+    .catch(() => {});
   return token;
 }
 
@@ -72,12 +78,21 @@ export async function getAuthUser(): Promise<AuthUser | null> {
   const r = rows[0];
   if (!r) return null;
 
-  await ensureProfileRows(r.id);
-  const [p] = await db
+  // Read profile first; only INSERT (self-heal) when actually missing.
+  // Previous version ran 2 INSERT ON CONFLICT on EVERY authenticated request.
+  let [p] = await db
     .select()
     .from(profiles)
     .where(eq(profiles.userId, r.id))
     .limit(1);
+  if (!p) {
+    await ensureProfileRows(r.id);
+    [p] = await db
+      .select()
+      .from(profiles)
+      .where(eq(profiles.userId, r.id))
+      .limit(1);
+  }
 
   return {
     id: r.id,

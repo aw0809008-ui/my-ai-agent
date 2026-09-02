@@ -1,7 +1,7 @@
 import { z } from "zod";
 import { db } from "@/db";
 import { conversations, messages, memories, files, usageEvents } from "@/db/schema";
-import { and, asc, eq, inArray } from "drizzle-orm";
+import { and, desc, eq, inArray } from "drizzle-orm";
 import { requireUser, type AuthUser } from "@/lib/auth";
 import { errResponse, apiError, limited, requestId, logEvent } from "@/lib/http";
 import { generateEmbedding, type ChatMessage } from "@/lib/ai-gateway";
@@ -111,13 +111,16 @@ export async function POST(req: Request) {
         .where(and(eq(conversations.id, conversationId), eq(conversations.userId, u.id)))
         .limit(1);
       if (!c) return apiError(404, "NOT_FOUND", "Conversation not found.");
+      // Take the LATEST 12 (order desc, limit, then re-sort ascending).
+      // Previous version ordered asc + limit 40 + slice(-12), which dropped the
+      // newest messages in long conversations (kept messages 28–40 instead).
       const rows = await db
         .select()
         .from(messages)
         .where(eq(messages.conversationId, conversationId))
-        .orderBy(asc(messages.createdAt))
-        .limit(40);
-      history = rows.slice(-12).map((m) => ({
+        .orderBy(desc(messages.createdAt))
+        .limit(12);
+      history = rows.reverse().map((m) => ({
         role: m.role === "assistant" ? ("assistant" as const) : ("user" as const),
         content: m.content.slice(0, 4000),
       }));

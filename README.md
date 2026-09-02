@@ -307,6 +307,23 @@ react-native shell reusing this exact API.
 
 ## 12. Troubleshooting
 
+**Audit hardening (June):** chat history now always uses the latest 12 messages
+(long threads previously dropped them); summarization classifier catches
+*summarize/summarise/summary*; generic memory recall ("what do you remember about
+me") falls back to importance+recency instead of a semantic threshold that
+stop-word queries could never pass; retry no longer duplicates the assistant
+bubble; fallback chains capped at 3 models; auth self-heal avoids extra writes;
+expired sessions are purged on login; first-user admin is race-hardened.
+
+## Rate limiting note
+
+Rate limits are in-memory per serverless instance (auth 12/min, chat 25/min,
+search 15/min, upload 20/min, export 5/min per key). On Vercel they apply
+per-warm-instance — sufficient for a personal app; move to a shared store
+(e.g. Upstash) for multi-user scale.
+
+## Troubleshooting
+
 | Symptom | Fix |
 |---|---|
 | "AI not linked" chip | Set `OPENROUTER_API_KEY` + `MODEL_*` (or self-hosted `AI_BASE_URL`/`AI_MODEL`) |
