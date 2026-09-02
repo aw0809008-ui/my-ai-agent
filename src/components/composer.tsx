@@ -9,7 +9,7 @@ import {
   useState,
 } from "react";
 import { AnimatePresence, motion } from "framer-motion";
-import { AlertCircle, ArrowUp, FileText, Mic, Paperclip, X } from "lucide-react";
+import { AlertCircle, ArrowUp, FileText, Mic, Paperclip, Square, X } from "lucide-react";
 import { Spinner } from "@/components/ui";
 import { api, type FileItem } from "@/lib/client";
 import clsx from "clsx";
@@ -26,6 +26,8 @@ interface Props {
   busy: boolean;
   placeholder?: string;
   onError?: (message: string) => void;
+  /** stop an in-flight generation */
+  onStop?: () => void;
 }
 
 interface Attachment {
@@ -63,7 +65,7 @@ function validateClient(f: File): string | null {
 }
 
 export const Composer = forwardRef<ComposerHandle, Props>(function Composer(
-  { onSend, onVoice, busy, placeholder, onError },
+  { onSend, onVoice, busy, placeholder, onError, onStop },
   ref
 ) {
   const [text, setText] = useState("");
@@ -262,7 +264,16 @@ export const Composer = forwardRef<ComposerHandle, Props>(function Composer(
               className="max-h-[148px] min-h-[36px] flex-1 resize-none bg-transparent px-1.5 py-2 text-[14.5px] leading-6 text-frost outline-none placeholder:text-faint"
             />
 
-            {empty ? (
+            {busy && onStop ? (
+              <button
+                onClick={onStop}
+                className="grid h-9 w-9 shrink-0 place-items-center rounded-xl border border-line bg-elev text-frost transition-colors hover:border-danger/50 hover:text-danger"
+                aria-label="Stop generating"
+                title="Stop generating"
+              >
+                <Square size={13} strokeWidth={3} className="fill-current" />
+              </button>
+            ) : empty ? (
               <button
                 onClick={onVoice}
                 disabled={busy}

@@ -16,6 +16,8 @@ import {
   ImageIcon,
   ListChecks,
   NotebookPen,
+  Pencil,
+  RefreshCw,
   Search,
   Wrench,
 } from "lucide-react";
@@ -80,11 +82,24 @@ function hostOf(url: string): string {
 export const MessageView = memo(function MessageView({
   m,
   streaming,
+  onRegenerate,
+  onEdit,
 }: {
   m: Msg;
   streaming?: boolean;
+  /** shown on the last assistant message */
+  onRegenerate?: () => void;
+  /** shown on user messages — puts the text back in the composer */
+  onEdit?: (content: string) => void;
 }) {
   const [sourcesOpen, setSourcesOpen] = useState(false);
+  const [copied, setCopied] = useState(false);
+
+  const copy = () => {
+    navigator.clipboard?.writeText(m.content).catch(() => {});
+    setCopied(true);
+    setTimeout(() => setCopied(false), 1400);
+  };
 
   if (m.role === "user") {
     return (
@@ -92,8 +107,29 @@ export const MessageView = memo(function MessageView({
         initial={{ opacity: 0, y: 6 }}
         animate={{ opacity: 1, y: 0 }}
         transition={{ duration: 0.18 }}
-        className="flex justify-end pl-10 sm:pl-20"
+        className="group/user flex justify-end gap-1.5 pl-10 sm:pl-20"
       >
+        {/* user actions: edit / copy */}
+        <div className="flex items-end gap-0.5 pb-1 opacity-0 transition-opacity group-hover/user:opacity-100 focus-within:opacity-100">
+          {onEdit && (
+            <button
+              onClick={() => onEdit(m.content)}
+              className="grid h-7 w-7 place-items-center rounded-lg text-faint transition-colors hover:bg-elev hover:text-frost"
+              aria-label="Edit and resend this message"
+              title="Edit & resend"
+            >
+              <Pencil size={12.5} />
+            </button>
+          )}
+          <button
+            onClick={copy}
+            className="grid h-7 w-7 place-items-center rounded-lg text-faint transition-colors hover:bg-elev hover:text-frost"
+            aria-label={copied ? "Copied" : "Copy message"}
+            title="Copy"
+          >
+            {copied ? <Check size={12.5} className="text-mint" /> : <Copy size={12.5} />}
+          </button>
+        </div>
         <div className="max-w-full rounded-2xl rounded-br-md border border-violet/25 bg-violet/12 px-3.5 py-2.5 text-[14px] leading-relaxed break-words whitespace-pre-wrap text-frost">
           {m.content}
         </div>
@@ -172,9 +208,31 @@ export const MessageView = memo(function MessageView({
         </div>
       ) : null}
 
-      {/* footer: model + sources toggle */}
-      {(m.model || sources.length > 0) && !streaming && (
+      {/* footer: actions + model + sources toggle */}
+      {(m.model || sources.length > 0 || m.content) && !streaming && (
         <div className="mt-2.5 flex flex-wrap items-center gap-x-3 gap-y-1.5">
+          {m.content && (
+            <span className="flex items-center gap-0.5">
+              <button
+                onClick={copy}
+                className="grid h-7 w-7 place-items-center rounded-lg text-faint transition-colors hover:bg-elev hover:text-frost"
+                aria-label={copied ? "Copied" : "Copy response"}
+                title="Copy"
+              >
+                {copied ? <Check size={13} className="text-mint" /> : <Copy size={13} />}
+              </button>
+              {onRegenerate && (
+                <button
+                  onClick={onRegenerate}
+                  className="grid h-7 w-7 place-items-center rounded-lg text-faint transition-colors hover:bg-elev hover:text-frost"
+                  aria-label="Regenerate response"
+                  title="Regenerate"
+                >
+                  <RefreshCw size={13} />
+                </button>
+              )}
+            </span>
+          )}
           {m.model && (
             <span className="text-[10.5px] font-medium tracking-wide text-faint">
               {m.model.replace(" (fallback)", "")}

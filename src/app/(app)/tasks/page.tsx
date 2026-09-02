@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useState } from "react";
 import { motion } from "framer-motion";
+import { useRouter } from "next/navigation";
 import {
   AlarmClockCheck,
   AlarmClockOff,
@@ -9,6 +10,7 @@ import {
   Check,
   Clock,
   Loader2,
+  MessageSquarePlus,
   Plus,
   RefreshCcw,
   Trash2,
@@ -21,6 +23,7 @@ import { api, formatReminderTime, type ReminderItem } from "@/lib/client";
 import clsx from "clsx";
 
 export default function TasksPage() {
+  const router = useRouter();
   const { toast, user } = useShell();
   const [items, setItems] = useState<ReminderItem[]>([]);
   const [doneItems, setDoneItems] = useState<ReminderItem[]>([]);
@@ -105,14 +108,26 @@ export default function TasksPage() {
             <EmptyState
               icon={AlarmClockCheck}
               title="No upcoming reminders"
-              body="Tell Aura “Remind me tomorrow at 9am to call Ali” — or create one here in plain language."
+              body="The fastest way to create one is Chat — just say “Remind me Friday at 8 PM to publish the listing”. Manage them here afterwards."
               action={
-                <Pressable
-                  onClick={() => setSheetOpen(true)}
-                  className="mt-1 flex items-center gap-1.5 rounded-full bg-violet px-4 py-2 text-[12.5px] font-semibold text-white"
-                >
-                  <Plus size={14} /> New reminder
-                </Pressable>
+                <div className="mt-1 flex flex-wrap justify-center gap-2">
+                  <Pressable
+                    onClick={() =>
+                      router.push(
+                        `/chat/new?q=${encodeURIComponent("Remind me tomorrow at 9 AM to ")}`
+                      )
+                    }
+                    className="flex items-center gap-1.5 rounded-full bg-violet px-4 py-2 text-[12.5px] font-semibold text-white"
+                  >
+                    <MessageSquarePlus size={14} /> Create from Chat
+                  </Pressable>
+                  <Pressable
+                    onClick={() => setSheetOpen(true)}
+                    className="flex items-center gap-1.5 rounded-full border border-line bg-card px-4 py-2 text-[12.5px] font-semibold text-mist"
+                  >
+                    <Plus size={14} /> Add manually
+                  </Pressable>
+                </div>
               }
             />
           ) : (

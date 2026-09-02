@@ -2,11 +2,13 @@
 
 import { useCallback, useEffect, useState } from "react";
 import { AnimatePresence, motion } from "framer-motion";
+import { useRouter } from "next/navigation";
 import {
   Archive,
   ArchiveRestore,
   Brain,
   Loader2,
+  MessageSquarePlus,
   NotebookPen,
   Pencil,
   Pin,
@@ -42,6 +44,7 @@ const CAT_COLORS: Record<string, string> = {
 };
 
 export default function MemoryPage() {
+  const router = useRouter();
   const { user, patchProfile, toast } = useShell();
   const [tab, setTab] = useState<"memories" | "notes">("memories");
 
@@ -151,7 +154,7 @@ export default function MemoryPage() {
     <div className="flex h-full flex-col">
       <PageHeader
         title="Memory & Notes"
-        subtitle="Everything Aura knows — inspectable and erasable"
+        subtitle="Manage what Aura remembers — created from Chat"
         right={
           <Pressable
             onClick={() => (tab === "memories" ? setMemSheet({ mode: "add" }) : setNoteSheet({ mode: "add" }))}
@@ -275,8 +278,20 @@ export default function MemoryPage() {
               title={memQuery || cat ? "Nothing found" : "No memories yet"}
               body={
                 user.memoryEnabled
-                  ? "Tell Aura: “Remember that I prefer morning meetings.” You can view, edit, or erase anything here."
-                  : "Memory is currently disabled, so Aura stores nothing long-term."
+                  ? "Memories are things you explicitly ask Aura to remember. In Chat, say: “Remember that I prefer morning meetings.” Manage them here."
+                  : "Memory is currently disabled, so Aura stores nothing long-term. Enable it above to start saving."
+              }
+              action={
+                user.memoryEnabled && !memQuery && !cat ? (
+                  <Pressable
+                    onClick={() =>
+                      router.push(`/chat/new?q=${encodeURIComponent("Remember that ")}`)
+                    }
+                    className="mt-1 flex items-center gap-1.5 rounded-full bg-violet px-4 py-2 text-[12.5px] font-semibold text-white"
+                  >
+                    <MessageSquarePlus size={14} /> Save one from Chat
+                  </Pressable>
+                ) : undefined
               }
             />
           ) : (
@@ -356,7 +371,7 @@ export default function MemoryPage() {
           <EmptyState
             icon={NotebookPen}
             title={noteQuery ? "No notes found" : showArchived ? "No archived notes" : "No notes yet"}
-            body="Say “Create a note: …” in chat, or tap + to write one."
+            body="Notes are created and searched from Chat — try “Create a note called Business Ideas” or “Search my notes for ecommerce”. You can also add one manually."
             action={
               <Pressable
                 onClick={() => setNoteSheet({ mode: "add" })}

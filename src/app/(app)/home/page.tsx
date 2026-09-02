@@ -7,12 +7,14 @@ import {
   AlarmClock,
   ArrowRight,
   Brain,
+  Code2,
   FileText,
   Globe,
   ImageIcon,
   MessageCircle,
   PenLine,
   Pin,
+  Sparkles,
 } from "lucide-react";
 import { Orb } from "@/components/orb";
 import { useShell } from "@/components/app-shell";
@@ -25,13 +27,45 @@ import {
   type ReminderItem,
 } from "@/lib/client";
 
+const q = (text: string, send = false) =>
+  `/chat/new?q=${encodeURIComponent(text)}${send ? "&send=1" : ""}`;
+
+/** Quick actions: every one opens Chat with a real, runnable action. */
 const QUICK = [
   { icon: MessageCircle, label: "Ask anything", href: "/chat/new" },
-  { icon: Globe, label: "Search the web", href: "/chat/new?q=Search the web for " },
-  { icon: AlarmClock, label: "Set reminder", href: "/chat/new?q=Remind me " },
+  { icon: Globe, label: "Search web", href: q("Search the web for the latest AI news today", true) },
+  { icon: AlarmClock, label: "Set reminder", href: q("Remind me tomorrow at 9 AM to ") },
   { icon: ImageIcon, label: "Analyze image", href: "/chat/new?attach=image" },
-  { icon: FileText, label: "Summarize file", href: "/chat/new?attach=file" },
-  { icon: PenLine, label: "Write something", href: "/chat/new?q=Write " },
+  { icon: FileText, label: "Read a file", href: "/chat/new?attach=file" },
+  { icon: PenLine, label: "Write", href: q("Help me write ") },
+];
+
+/** Suggested prompts demonstrate real capabilities and run immediately. */
+const SUGGESTED = [
+  {
+    icon: Globe,
+    title: "Search the latest AI news",
+    sub: "Web search with sources",
+    href: q("Search the web for the latest AI news today", true),
+  },
+  {
+    icon: Code2,
+    title: "Debug my code",
+    sub: "Paste code, get a fix",
+    href: q("Help me debug this code — here is the error:\n\n"),
+  },
+  {
+    icon: Brain,
+    title: "Remember something",
+    sub: "Saved to long-term memory",
+    href: q("Remember that "),
+  },
+  {
+    icon: AlarmClock,
+    title: "Remind me tomorrow at 9 AM",
+    sub: "Creates a real reminder",
+    href: q("Remind me tomorrow at 9 AM to "),
+  },
 ];
 
 export default function HomePage() {
@@ -101,19 +135,53 @@ export default function HomePage() {
       </div>
 
       <div className="lg:mx-auto lg:max-w-[880px]">
-      {/* compact hero */}
+      {/* compact hero — Chat is the entry point */}
       <div className="mt-5 flex flex-col items-center">
-        <Orb state={orbTap ? "thinking" : ai.reachable ? "idle" : "offline"} size={112} />
+        <Orb state={orbTap ? "thinking" : ai.reachable ? "idle" : "offline"} size={104} />
         <p className="mt-3.5 text-center font-display text-[17px] font-semibold tracking-tight text-frost">
-          What can I help you with?
+          Ask Aura anything
         </p>
-        <p className="mt-1 text-center text-[12px] text-faint">
-          Private by design · remembers what matters
+        <p className="mt-1 max-w-[330px] text-center text-[12px] leading-relaxed text-faint">
+          Chat is where everything happens — search the web, analyse images, save
+          memories and create reminders just by asking.
         </p>
+        <Pressable
+          onClick={() => router.push("/chat/new")}
+          className="mt-4 flex items-center gap-2 rounded-xl bg-violet px-5 py-2.5 text-[13.5px] font-semibold text-white transition-colors hover:bg-iris"
+        >
+          <Sparkles size={15} /> Start a chat
+        </Pressable>
+      </div>
+
+      {/* suggested prompts — each launches a real action in Chat */}
+      <div className="mt-7">
+        <h2 className="mb-2.5 px-1 text-[11px] font-semibold tracking-[0.12em] text-faint uppercase">
+          Try this
+        </h2>
+        <div className="grid gap-2 sm:grid-cols-2">
+          {SUGGESTED.map((s) => (
+            <Pressable
+              key={s.title}
+              onClick={() => router.push(s.href)}
+              className="group flex items-start gap-3 rounded-xl border border-line bg-card p-3 text-left transition-colors hover:border-line-strong hover:bg-elev"
+            >
+              <span className="mt-0.5 grid h-7 w-7 shrink-0 place-items-center rounded-lg bg-elev text-violet transition-colors group-hover:bg-violet/12">
+                <s.icon size={14} strokeWidth={1.9} />
+              </span>
+              <span className="min-w-0">
+                <span className="block text-[13px] font-medium text-frost">{s.title}</span>
+                <span className="block text-[11px] text-faint">{s.sub}</span>
+              </span>
+            </Pressable>
+          ))}
+        </div>
       </div>
 
       {/* quick actions */}
-      <div className="mt-6 grid grid-cols-3 gap-2 lg:grid-cols-6 lg:gap-2.5">
+      <h2 className="mt-7 mb-2.5 px-1 text-[11px] font-semibold tracking-[0.12em] text-faint uppercase">
+        Quick actions
+      </h2>
+      <div className="grid grid-cols-3 gap-2 lg:grid-cols-6 lg:gap-2.5">
         {QUICK.map((q, i) => (
           <motion.div
             key={q.label}

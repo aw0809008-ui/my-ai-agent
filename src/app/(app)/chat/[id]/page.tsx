@@ -18,10 +18,13 @@ import {
   Check,
   ChevronUp,
   Code2,
+  Download,
   Globe,
   Menu,
+  MoreVertical,
   Pencil,
   RotateCcw,
+  Trash2,
   Volume2,
   X,
 } from "lucide-react";
@@ -83,17 +86,25 @@ function ChatRoomInner({ id }: { id: string }) {
   const [voiceOpen, setVoiceOpen] = useState(false);
   const [editingTitle, setEditingTitle] = useState(false);
   const [titleDraft, setTitleDraft] = useState("");
+  const [menuOpen, setMenuOpen] = useState(false);
   const composerRef = useRef<ComposerHandle>(null);
   const scrollRef = useRef<HTMLDivElement>(null);
   const stickRef = useRef(true);
   const busyRef = useRef(false);
   const lastBotRef = useRef<string | null>(null);
+  const abortRef = useRef<AbortController | null>(null);
+  const sendRef = useRef<((t: string, f: string[]) => void) | null>(null);
 
   // initial load
   useEffect(() => {
     if (id === "new") {
       const q = params.get("q");
       const attach = params.get("attach");
+      // ?send=1 → submit immediately (Home suggestion cards), otherwise prefill
+      if (q && params.get("send") === "1") {
+        const t = setTimeout(() => sendRef.current?.(q, []), 0);
+        return () => clearTimeout(t);
+      }
       requestAnimationFrame(() => {
         if (q) composerRef.current?.setText(q);
         if (attach) {
@@ -211,8 +222,11 @@ function ChatRoomInner({ id }: { id: string }) {
         setMessages((prev) => prev.map((m) => (m.id === botId ? fn(m) : m)));
 
       try {
+        const controller = new AbortController();
+        abortRef.current = controller;
         const res = await fetch("/api/chat", {
           method: "POST",
+          signal: controller.signal,
           headers: { "Content-Type": "application/json", ...authHeaders() },
           body: JSON.stringify({
             conversationId: cid ?? undefined,
@@ -283,15 +297,19 @@ function ChatRoomInner({ id }: { id: string }) {
         patchBot((m) => ({ ...m, streaming: false }));
         if (finalText) speakIfEnabled(finalText);
       } catch (e) {
+        const stopped = e instanceof DOMException && e.name === "AbortError";
         patchBot((m) => ({
           ...m,
           streaming: false,
-          content: m.content || "",
+          content: m.content || (stopped ? "_Stopped._" : ""),
         }));
-        setStreamErr(
-          e instanceof Error ? e.message : "Network error. Check your connection and retry."
-        );
+        if (!stopped) {
+          setStreamErr(
+            e instanceof Error ? e.message : "Network error. Check your connection and retry."
+          );
+        }
       } finally {
+        abortRef.current = null;
         busyRef.current = false;
         setBusy(false);
       }
@@ -299,12 +317,68 @@ function ChatRoomInner({ id }: { id: string }) {
     [cid, speakIfEnabled]
   );
 
+  // expose the latest send() to the mount effect (auto-send from Home)
+  useEffect(() => {
+    sendRef.current = (t: string, f: string[]) => send(t, f);
+  }, [send]);
+
+  /** Stop an in-flight generation (partial text is kept). */
+  const stopGeneration = useCallback(() => {
+    abortRef.current?.abort();
+  }, []);
+
+  /** Regenerate: drop the last assistant reply and resend the last user text. */
+  const regenerate = useCallback(() => {
+    if (busyRef.current) return;
+    const lastUser = [...messages].reverse().find((m) => m.role === "user");
+    if (!lastUser) return;
+    setMessages((prev) => {
+      const idx = prev.map((m) => m.role).lastIndexOf("assistant");
+      return idx === -1 ? prev : prev.filter((_, i) => i !== idx);
+    });
+    send(lastUser.content, [], true);
+  }, [messages, send]);
+
   const orbState: OrbState = busy
     ? messages[messages.length - 1]?.content
       ? "responding"
       : "thinking"
     : "idle";
   const talking = settings.voice?.enabled;
+
+  /** Export this conversation as a markdown file (client-side, no backend change). */
+  const exportConversation = useCallback(() => {
+    const lines = [`# ${title}`, ""];
+    for (const m of messages) {
+      if (!m.content) continue;
+      lines.push(m.role === "user" ? "**You**" : `**Aura**${m.model ? ` · ${m.model}` : ""}`);
+      lines.push("", m.content, "");
+      if (m.sources?.length) {
+        lines.push("Sources:");
+        for (const s of m.sources) lines.push(`- [${s.title}](${s.url})`);
+        lines.push("");
+      }
+    }
+    const blob = new Blob([lines.join("\n")], { type: "text/markdown" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = `${title.replace(/[^\w\s-]/g, "").slice(0, 50) || "conversation"}.md`;
+    a.click();
+    URL.revokeObjectURL(url);
+    toast("Conversation exported");
+  }, [messages, title, toast]);
+
+  const deleteConversation = useCallback(async () => {
+    if (!cid) return;
+    try {
+      await api(`/api/conversations/${cid}`, { method: "DELETE" });
+      toast("Conversation deleted");
+      router.push("/chat");
+    } catch {
+      toast("Couldn't delete this conversation");
+    }
+  }, [cid, router, toast]);
 
   const saveTitle = async () => {
     setEditingTitle(false);
@@ -403,11 +477,69 @@ function ChatRoomInner({ id }: { id: string }) {
                   voiceName: settings.voice.voiceName,
                 });
             }}
-            className="grid h-9 w-9 shrink-0 place-items-center rounded-full text-mist hover:bg-elev hover:text-frost"
+            className="grid h-9 w-9 shrink-0 place-items-center rounded-xl text-mist hover:bg-elev hover:text-frost"
             aria-label="Read last reply aloud"
           >
             <Volume2 size={17} />
           </Pressable>
+        )}
+
+        {/* conversation menu */}
+        {cid && (
+          <div className="relative shrink-0">
+            <Pressable
+              onClick={() => setMenuOpen((o) => !o)}
+              aria-expanded={menuOpen}
+              aria-label="Conversation options"
+              className="grid h-9 w-9 place-items-center rounded-xl text-mist hover:bg-elev hover:text-frost"
+            >
+              <MoreVertical size={17} />
+            </Pressable>
+            {menuOpen && (
+              <>
+                <button
+                  className="fixed inset-0 z-20 cursor-default"
+                  onClick={() => setMenuOpen(false)}
+                  aria-label="Close menu"
+                  tabIndex={-1}
+                />
+                <motion.div
+                  initial={{ opacity: 0, scale: 0.96, y: -4 }}
+                  animate={{ opacity: 1, scale: 1, y: 0 }}
+                  className="absolute top-11 right-0 z-30 w-44 overflow-hidden rounded-xl border border-line bg-elev elevated"
+                >
+                  <button
+                    onClick={() => {
+                      setMenuOpen(false);
+                      setTitleDraft(title);
+                      setEditingTitle(true);
+                    }}
+                    className="flex w-full items-center gap-2.5 px-3.5 py-2.5 text-[13px] text-frost hover:bg-card"
+                  >
+                    <Pencil size={14} className="text-faint" /> Rename
+                  </button>
+                  <button
+                    onClick={() => {
+                      setMenuOpen(false);
+                      exportConversation();
+                    }}
+                    className="flex w-full items-center gap-2.5 px-3.5 py-2.5 text-[13px] text-frost hover:bg-card"
+                  >
+                    <Download size={14} className="text-faint" /> Export markdown
+                  </button>
+                  <button
+                    onClick={() => {
+                      setMenuOpen(false);
+                      deleteConversation();
+                    }}
+                    className="flex w-full items-center gap-2.5 border-t border-line px-3.5 py-2.5 text-[13px] text-danger hover:bg-card"
+                  >
+                    <Trash2 size={14} /> Delete chat
+                  </button>
+                </motion.div>
+              </>
+            )}
+          </div>
         )}
         </div>
       </div>
@@ -463,9 +595,24 @@ function ChatRoomInner({ id }: { id: string }) {
             </div>
           )}
 
-          {messages.map((m) => (
-            <MessageView key={m.id} m={m} streaming={m.streaming} />
-          ))}
+          {messages.map((m, i) => {
+            const isLastAssistant =
+              m.role === "assistant" &&
+              i === messages.map((x) => x.role).lastIndexOf("assistant");
+            return (
+              <MessageView
+                key={m.id}
+                m={m}
+                streaming={m.streaming}
+                onRegenerate={isLastAssistant && !busy ? regenerate : undefined}
+                onEdit={
+                  m.role === "user" && !busy
+                    ? (content) => composerRef.current?.setText(content)
+                    : undefined
+                }
+              />
+            );
+          })}
 
           {/* stream error / retry */}
           <AnimatePresence>
@@ -498,6 +645,7 @@ function ChatRoomInner({ id }: { id: string }) {
         onSend={(t, f) => send(t, f)}
         onVoice={() => setVoiceOpen(true)}
         onError={(msg) => toast(msg)}
+        onStop={stopGeneration}
       />
       <VoiceOverlay
         open={voiceOpen}
