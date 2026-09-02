@@ -38,6 +38,23 @@ export function imageGenConfigured(): boolean {
   return Boolean(process.env.OPENROUTER_API_KEY?.trim()) && imageModelId() !== "";
 }
 
+/**
+ * Candidate chain: configured primary, then fallbacks (env
+ * MODEL_IMAGE_GENERATION_FALLBACK, comma-separated). Text routing has the same
+ * pattern — image generation should not die just because ONE free-tier model
+ * is rate-limited today.
+ */
+export function imageModelChain(): string[] {
+  const primary = imageModelId();
+  const fallbacks = (
+    process.env.MODEL_IMAGE_GENERATION_FALLBACK ?? "google/gemini-2.5-flash-image"
+  )
+    .split(",")
+    .map((s) => s.trim())
+    .filter(Boolean);
+  return [...new Set([primary, ...fallbacks])].filter(Boolean);
+}
+
 function headers(): Record<string, string> {
   const key = process.env.OPENROUTER_API_KEY?.trim();
   const h: Record<string, string> = { "Content-Type": "application/json" };
@@ -136,40 +153,13 @@ function sniffMime(buf: Buffer): string | null {
   return null;
 }
 
-/**
- * Text-to-image generation. Throws ImageGenError with an honest category;
- * never returns a placeholder or fake result.
- */
-export async function generateImage(
+async function attemptModel(
+  modelId: string,
   prompt: string,
-  opts: { aspectRatio?: string } = {}
+  caps: ImageModelCaps | null,
+  opts: { aspectRatio?: string }
 ): Promise<GeneratedImage> {
-  if (!process.env.OPENROUTER_API_KEY?.trim())
-    throw new ImageGenError("OPENROUTER_API_KEY is not configured", null, "auth");
-
-  const modelId = imageModelId();
-  if (!modelId) throw new ImageGenError("MODEL_IMAGE_GENERATION is not set", null, "not_found");
-
-  // capability check against the provider's own image catalog
-  const catalog = await imageCatalog();
-  const caps = catalog?.get(modelId) ?? null;
-  if (catalog && !caps) {
-    throw new ImageGenError(
-      `Model "${modelId}" is not in the provider's image catalog`,
-      404,
-      "not_found"
-    );
-  }
-  if (caps && !caps.outputsImage) {
-    throw new ImageGenError(
-      `Model "${modelId}" does not produce image output`,
-      400,
-      "unsupported"
-    );
-  }
-
   const body: Record<string, unknown> = { model: modelId, prompt: prompt.slice(0, 1500), n: 1 };
-  // only send aspect_ratio when the provider says the model supports that value
   if (opts.aspectRatio && caps?.aspectRatios.includes(opts.aspectRatio)) {
     body.aspect_ratio = opts.aspectRatio;
   }
@@ -231,9 +221,9 @@ export async function generateImage(
   } catch {
     throw new ImageGenError("provider returned undecodable image data", res.status, "unknown");
   }
-  if (bytes.length < 64) throw new ImageGenError("provider returned an empty image", res.status, "empty");
+  if (bytes.length < 64)
+    throw new ImageGenError("provider returned an empty image", res.status, "empty");
 
-  // trust magic bytes over the advertised media_type; reject anything unsafe
   const sniffed = sniffMime(bytes);
   const mime = sniffed ?? (first.media_type ?? "");
   if (!ALLOWED_MIME.has(mime)) {
@@ -258,4 +248,73 @@ export async function generateImage(
     modelId,
     modelName: caps?.displayName ?? modelId,
   };
+}
+
+/**
+ * Text-to-image generation with a bounded fallback chain. Throws ImageGenError
+ * with an honest category; never returns a placeholder or fake result.
+ *
+ * Quota/auth errors short-circuit the chain immediately (every model on this
+ * account would fail the same way — retrying just costs latency). Transient
+ * failures (429, 5xx, timeout, empty) move to the next candidate.
+ */
+export async function generateImage(
+  prompt: string,
+  opts: { aspectRatio?: string } = {}
+): Promise<GeneratedImage> {
+  if (!process.env.OPENROUTER_API_KEY?.trim())
+    throw new ImageGenError("OPENROUTER_API_KEY is not configured", null, "auth");
+
+  const chain = imageModelChain();
+  if (!chain.length)
+    throw new ImageGenError("MODEL_IMAGE_GENERATION is not set", null, "not_found");
+
+  // capability check against the provider's own image catalog (once)
+  const catalog = await imageCatalog();
+  const errors: ImageGenError[] = [];
+
+  for (const modelId of chain) {
+    const caps = catalog?.get(modelId) ?? null;
+    if (catalog && !caps) {
+      errors.push(
+        new ImageGenError(`Model "${modelId}" is not in the provider's image catalog`, 404, "not_found")
+      );
+      continue; // config error for this candidate — try the next
+    }
+    if (caps && !caps.outputsImage) {
+      errors.push(
+        new ImageGenError(`Model "${modelId}" does not produce image output`, 400, "unsupported")
+      );
+      continue;
+    }
+    try {
+      return await attemptModel(modelId, prompt, caps, opts);
+    } catch (e) {
+      const err =
+        e instanceof ImageGenError ? e : new ImageGenError("generation failed", null, "unknown");
+      // shared-account failures: no other model would help, stop immediately
+      if (err.category === "quota" || err.category === "auth") throw err;
+      errors.push(err);
+    }
+  }
+
+  // nothing worked: surface the most actionable category from the whole chain
+  const priority: FailureCategory[] = [
+    "auth",
+    "quota",
+    "not_found",
+    "rate_limited",
+    "unsupported",
+    "upstream",
+    "network",
+    "empty",
+    "unknown",
+  ];
+  const best =
+    priority.map((c) => errors.find((e) => e.category === c)).find(Boolean) ?? errors[0];
+  logEvent({
+    msg: "image_gen_chain_exhausted",
+    attempts: errors.map((e) => `${e.message.slice(0, 60)} (${e.category})`),
+  });
+  throw best ?? new ImageGenError("image generation failed", null, "unknown");
 }
