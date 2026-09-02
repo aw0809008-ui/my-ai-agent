@@ -26,6 +26,7 @@ import {
   RotateCcw,
   Trash2,
   Volume2,
+  Wand2,
   X,
 } from "lucide-react";
 import { useShell } from "@/components/app-shell";
@@ -42,7 +43,14 @@ interface ChatMsg extends MessageItem {
   streaming?: boolean;
 }
 
-const SUGGESTIONS: { icon: typeof Globe; label: string; prompt: string; hint: string }[] = [
+const SUGGESTIONS: {
+  icon: typeof Globe;
+  label: string;
+  prompt: string;
+  hint: string;
+  /** load into the composer instead of sending (prompt needs completing) */
+  prefillOnly?: boolean;
+}[] = [
   {
     icon: Globe,
     label: "Search the latest AI news",
@@ -66,6 +74,13 @@ const SUGGESTIONS: { icon: typeof Globe; label: string; prompt: string; hint: st
     label: "Set a reminder",
     prompt: "Remind me tomorrow at 9 AM to review the roadmap",
     hint: "Works offline of the LLM",
+  },
+  {
+    icon: Wand2,
+    label: "Generate an image",
+    prompt: "Create an image of ",
+    hint: "Text-to-image",
+    prefillOnly: true,
   },
 ];
 
@@ -579,7 +594,11 @@ function ChatRoomInner({ id }: { id: string }) {
                     initial={{ opacity: 0, y: 8 }}
                     animate={{ opacity: 1, y: 0 }}
                     transition={{ delay: 0.05 * i, duration: 0.2 }}
-                    onClick={() => send(s.prompt, [])}
+                    onClick={() =>
+                      s.prefillOnly
+                        ? composerRef.current?.setText(s.prompt)
+                        : send(s.prompt, [])
+                    }
                     className="group flex items-start gap-3 rounded-xl border border-line bg-card p-3 text-left transition-colors hover:border-line-strong hover:bg-elev"
                   >
                     <span className="mt-0.5 grid h-7 w-7 shrink-0 place-items-center rounded-lg bg-elev text-violet transition-colors group-hover:bg-violet/12">

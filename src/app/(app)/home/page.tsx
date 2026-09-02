@@ -15,6 +15,7 @@ import {
   PenLine,
   Pin,
   Sparkles,
+  Wand2,
 } from "lucide-react";
 import { Orb } from "@/components/orb";
 import { useShell } from "@/components/app-shell";
@@ -36,7 +37,7 @@ const QUICK = [
   { icon: Globe, label: "Search web", href: q("Search the web for the latest AI news today", true) },
   { icon: AlarmClock, label: "Set reminder", href: q("Remind me tomorrow at 9 AM to ") },
   { icon: ImageIcon, label: "Analyze image", href: "/chat/new?attach=image" },
-  { icon: FileText, label: "Read a file", href: "/chat/new?attach=file" },
+  { icon: Wand2, label: "Generate image", href: q("Create an image of ") },
   { icon: PenLine, label: "Write", href: q("Help me write ") },
 ];
 
@@ -65,6 +66,12 @@ const SUGGESTED = [
     title: "Remind me tomorrow at 9 AM",
     sub: "Creates a real reminder",
     href: q("Remind me tomorrow at 9 AM to "),
+  },
+  {
+    icon: Wand2,
+    title: "Create an image",
+    sub: "Text-to-image generation",
+    href: q("Create an image of "),
   },
 ];
 

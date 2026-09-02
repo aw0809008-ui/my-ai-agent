@@ -13,6 +13,72 @@ export interface IntentCall {
   label: string; // short human label for the UI chip
 }
 
+/**
+ * Detect a text-to-image GENERATION request.
+ *
+ * Deliberately conservative and separate from image UNDERSTANDING:
+ *  - callers must pass hasImageAttachment; when an image is attached the user
+ *    is asking ABOUT that image, so generation never fires.
+ *  - requires a creation verb AND an image noun ("draw a cat" also counts).
+ *  - explicit analysis verbs (describe/analyse/read/what is…) are excluded.
+ *
+ * Returns the cleaned image prompt, or null when this isn't a generation ask.
+ */
+export function detectImageGeneration(
+  raw: string,
+  hasImageAttachment: boolean
+): string | null {
+  if (hasImageAttachment) return null; // → vision route, never generation
+  const text = raw.trim();
+  const t = text.toLowerCase();
+  if (t.length < 4 || text.length > 1500) return null;
+
+  // asking about an existing/looked-at image → understanding, not generation
+  if (/\b(what|describe|analy[sz]e|explain|read|identify|caption|ocr)\b[^.?!]{0,40}\b(this|that|the|my|attached|uploaded)\s+(image|picture|photo|screenshot|chart)\b/.test(t))
+    return null;
+
+  const IMAGE_NOUN =
+    String.raw`(?:image|picture|photo(?:graph)?|illustration|drawing|artwork|art|logo|icon|poster|thumbnail|wallpaper|avatar|sketch|painting|render(?:ing)?|graphic|banner|mockup)`;
+  const CREATE_VERB = String.raw`(?:create|generate|make|draw|design|render|produce|paint|sketch|illustrate|imagine)`;
+
+  // "create an image of X" / "generate a logo for X" / "make me a poster showing X"
+  const m1 = t.match(
+    new RegExp(
+      String.raw`^(?:please\s+|can you\s+|could you\s+|i want you to\s+|i need\s+)*${CREATE_VERB}\s+(?:me\s+)?(?:an?\s+|some\s+|the\s+)?(?:\w+\s+){0,3}?${IMAGE_NOUN}\b\s*(?:of|showing|with|for|depicting|that shows|about)?\s*([\s\S]*)$`,
+      "i"
+    )
+  );
+  if (m1) {
+    const subject = m1[1].trim().replace(/^[:,\-–—]\s*/, "");
+    // keep the whole original phrasing as the prompt — style words matter
+    return subject.length >= 2 ? text.replace(/^\s*(please|can you|could you)\s+/i, "").trim() : null;
+  }
+
+  // "draw a cartoon elephant" — verb + subject, image noun implied by draw/paint/sketch
+  const m2 = t.match(
+    new RegExp(`^(?:please\\s+)?(?:draw|paint|sketch|illustrate)\\s+(?:me\\s+)?(?:an?\\s+|the\\s+)?([\\s\\S]{2,})$`, "i")
+  );
+  if (m2) return text.replace(/^\s*please\s+/i, "").trim();
+
+  // "generate a cartoon elephant" — create verb + a visual style/medium word.
+  // App nouns are excluded first so "create a note/reminder/task" never fires.
+  const APP_NOUN =
+    /\b(note|notes|reminder|reminders|task|tasks|memory|memories|list|account|password|conversation|chat|summary|plan|schedule|file|folder|report|email|message|function|script|component|api|endpoint|table|query|test|readme)\b/;
+  const STYLE_WORD =
+    /\b(cartoon|realistic|photorealistic|photo-?real|3d|anime|manga|watercolou?r|oil painting|pixel art|pixel-art|minimalist|futuristic|surreal|abstract|isometric|low-?poly|sci-?fi|fantasy|vintage|retro|cyberpunk|steampunk|comic|caricature|portrait|landscape|silhouette|neon|vector|flat design|line art|concept art|digital art|studio lighting|cinematic)\b/;
+  const m3 = t.match(
+    new RegExp(`^(?:please\\s+)?(?:${CREATE_VERB})\\s+(?:me\\s+)?(?:an?\\s+|some\\s+|the\\s+)?([\\s\\S]{2,})$`, "i")
+  );
+  if (m3 && !APP_NOUN.test(t) && STYLE_WORD.test(t)) {
+    return text.replace(/^\s*please\s+/i, "").trim();
+  }
+
+  // "an image of X, please" style trailing form
+  if (new RegExp(String.raw`^${IMAGE_NOUN}\s+of\s+[\s\S]{2,}$`, "i").test(t)) return text;
+
+  return null;
+}
+
 const TIME = String.raw`(?:at\s+\d{1,2}(?::\d{2})?\s*(?:a\.?m\.?|p\.?m\.?|am|pm)?(?:\s+(?:today|tomorrow|tonight|morning|evening|afternoon|night))?|tomorrow(?:\s+(?:morning|evening|afternoon|night))?(?:\s+at\s+\d{1,2}(?::\d{2})?\s*(?:a\.?m\.?|p\.?m\.?|am|pm)?)?|tonight|today|this\s+(?:morning|evening|afternoon)|in\s+\d+\s*(?:minutes?|mins?|hours?|hrs?|days?)|on\s+(?:monday|tuesday|wednesday|thursday|friday|saturday|sunday)(?:\s+at\s+\d{1,2}(?::\d{2})?\s*(?:a\.?m\.?|p\.?m\.?|am|pm)?)?|next\s+week|every\s+(?:day|morning|evening|week|monday|tuesday|wednesday|thursday|friday|saturday|sunday)(?:\s+at\s+\d{1,2}(?::\d{2})?\s*(?:a\.?m\.?|p\.?m\.?|am|pm)?)?)`;
 const TIME_AT_END = new RegExp(`^([\\s\\S]*?)\\s+(${TIME})[.,!?\\s]*$`, "i");
 const TIME_AT_START = new RegExp(`^(${TIME})[.,!?\\s]*\\s+(?:to\\s+)?([\\s\\S]+)$`, "i");

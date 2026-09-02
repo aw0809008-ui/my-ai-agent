@@ -9,6 +9,7 @@ import {
   type FailureCategory,
 } from "@/lib/openrouter";
 import { selectModels } from "@/lib/model-router";
+import { imageCatalog, imageGenConfigured, imageModelId } from "@/lib/image-gen";
 
 // Explicit Node runtime: this route reads server-only env vars, PostgreSQL auth,
 // and performs a server-side OpenRouter probe. It must never be edge-cached.
@@ -26,6 +27,7 @@ const ENV_VARS = [
   "MODEL_NEMOTRON_OMNI",
   "MODEL_LAGUNA",
   "MODEL_GEMMA",
+  "MODEL_IMAGE_GENERATION",
   "AI_BASE_URL",
   "AI_MODEL",
 ];
@@ -125,6 +127,21 @@ export async function GET() {
       }
     }
 
+    // image generation uses a SEPARATE provider + catalog (/v1/images)
+    const imgCatalog = await imageCatalog();
+    const imgId = imageModelId();
+    const imageGeneration = {
+      configured: imageGenConfigured(),
+      modelId: imgId,
+      catalogReachable: imgCatalog !== null,
+      listedByProvider: imgCatalog ? imgCatalog.has(imgId) : null,
+      outputsImage: imgCatalog ? (imgCatalog.get(imgId)?.outputsImage ?? false) : null,
+      note:
+        imgCatalog && !imgCatalog.has(imgId)
+          ? "Model not in the image catalog — check openrouter.ai/models?output_modalities=image"
+          : "OpenRouter currently lists no ':free' image models; generation bills per image.",
+    };
+
     const diagnosis = !env.OPENROUTER_API_KEY?.nonEmpty
       ? "MISSING_API_KEY: set OPENROUTER_API_KEY in Vercel env vars (Production), then redeploy."
       : !health.reachable
@@ -155,6 +172,7 @@ export async function GET() {
               dropped: selection.drop,
             }
           : { best: null, dropped: selection.drop },
+        imageGeneration,
         probe,
         diagnosis,
       },

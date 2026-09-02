@@ -12,7 +12,8 @@ import {
   visionAnswer,
 } from "@/lib/model-router";
 import { executeTool, toolDescriptions, type ToolContext } from "@/lib/tools";
-import { routeIntent } from "@/lib/intent";
+import { detectImageGeneration, routeIntent } from "@/lib/intent";
+import { generateImage, ImageGenError, imageGenConfigured } from "@/lib/image-gen";
 import { topK } from "@/lib/embeddings";
 import { IMAGE_MIMES } from "@/lib/extract";
 
@@ -191,6 +192,11 @@ export async function POST(req: Request) {
 
           const status = await aiStatus();
           const aiUp = status.configured && status.reachable;
+          // Image GENERATION is decided before any text/vision routing and only
+          // when no image is attached (an attachment means "understand this").
+          const imagePrompt = imageGenConfigured()
+            ? detectImageGeneration(body.message, attachedImages.length > 0)
+            : null;
           let modelMeta: { name: string; fallback: boolean; category: string } | null = null;
           /** Route + stream one answer. Yields deltas; model metadata is sent
            *  via SSE automatically. Throws ALL_MODELS_UNAVAILABLE if the whole
@@ -248,6 +254,83 @@ export async function POST(req: Request) {
                 e instanceof Error && e.message === "VISION_NOT_CONFIGURED"
                   ? `I can see you attached **${attachedImages[0].name}**, but no vision-capable model is configured. Set e.g. \`MODEL_NEMOTRON_OMNI\` + \`MODEL_NEMOTRON_OMNI_VISION=true\` (after verifying image input on openrouter.ai/models), or a self-hosted \`VISION_MODEL\`.`
                   : "The vision model failed to respond. Please try again."
+              );
+            }
+          } else if (imagePrompt) {
+            // ---------- image GENERATION path (separate from vision) -------
+            toolEvents.push({ name: "generate_image", status: "running" });
+            send("tool", {
+              name: "generate_image",
+              status: "running",
+              label: "Generating image",
+            });
+            try {
+              const gen = await generateImage(imagePrompt);
+              // Store in Postgres (same secure, user-scoped store as uploads —
+              // no filesystem assumptions, works on Vercel serverless).
+              const [row] = await db
+                .insert(files)
+                .values({
+                  userId: u.id,
+                  name: `generated-${Date.now()}.${gen.mime.split("/")[1].replace("jpeg", "jpg")}`,
+                  mime: gen.mime,
+                  size: gen.bytes.length,
+                  content: gen.bytes,
+                })
+                .returning({ id: files.id });
+
+              toolEvents[toolEvents.length - 1].status = "ok";
+              send("tool", { name: "generate_image", status: "ok", label: "Image generated" });
+              send("model", {
+                name: gen.modelName,
+                provider: "openrouter",
+                fallback: false,
+                category: "image_generation",
+              });
+              modelMeta = {
+                name: gen.modelName,
+                fallback: false,
+                category: "image_generation",
+              };
+              // markdown image → rendered by the chat UI, served owner-scoped
+              pushAll(
+                `![${imagePrompt.slice(0, 120).replace(/[[\]]/g, "")}](/api/files/${row.id})`
+              );
+              await db
+                .insert(usageEvents)
+                .values({
+                  userId: u.id,
+                  kind: "image_generation",
+                  meta: { model: gen.modelId, bytes: gen.bytes.length },
+                })
+                .catch(() => {});
+            } catch (e) {
+              toolEvents[toolEvents.length - 1].status = "error";
+              send("tool", {
+                name: "generate_image",
+                status: "error",
+                label: "Image generation failed",
+              });
+              const cat = e instanceof ImageGenError ? e.category : "unknown";
+              const detail = e instanceof Error ? e.message : "unknown error";
+              const HINTS: Record<string, string> = {
+                auth: "The image provider rejected the API key. Check `OPENROUTER_API_KEY`.",
+                quota:
+                  "Image generation needs OpenRouter credits — there are currently **no free image models** on OpenRouter, so this model bills per image. Add credits, or set `MODEL_IMAGE_GENERATION` to a cheaper model.",
+                rate_limited:
+                  "The image model is rate limited right now. Please try again shortly.",
+                not_found:
+                  "The configured image model wasn't found. Check `MODEL_IMAGE_GENERATION` against openrouter.ai/models?output_modalities=image.",
+                unsupported:
+                  "The image provider rejected this request (unsupported parameter or format).",
+                upstream: "The image provider is having trouble (5xx). Please try again shortly.",
+                network: "Couldn't reach the image provider (network/timeout).",
+                empty: "The provider returned no image. Please try again.",
+                unknown: "Image generation failed.",
+              };
+              // honest failure — never claim an image was produced
+              pushAll(
+                `I couldn't generate that image.\n\n${HINTS[cat] ?? HINTS.unknown}\n\n\`${detail}\``
               );
             }
           } else {

@@ -11,9 +11,11 @@ import {
   ChevronDown,
   Clock,
   Copy,
+  Download,
   FileSearch,
   Globe,
   ImageIcon,
+  ImageOff,
   ListChecks,
   NotebookPen,
   Pencil,
@@ -22,6 +24,7 @@ import {
   Wrench,
 } from "lucide-react";
 import type { MessageItem as Msg } from "@/lib/client";
+import { Spinner } from "@/components/ui";
 import clsx from "clsx";
 
 const TOOL_META: Record<string, { icon: typeof Globe; running: string; done: string }> = {
@@ -58,6 +61,57 @@ function CodeBlock({ children }: { children?: React.ReactNode }) {
         <code>{text}</code>
       </pre>
     </div>
+  );
+}
+
+/** Generated/served image inside an assistant message: responsive, with
+ *  loading + error states and a download action. */
+function ChatImage({ src, alt }: { src?: string; alt?: string }) {
+  const [state, setState] = useState<"loading" | "ok" | "error">("loading");
+  if (!src) return null;
+  return (
+    <span className="mt-1 mb-1 block">
+      <span className="relative block w-full max-w-[420px] overflow-hidden rounded-xl border border-line bg-elev">
+        {state === "loading" && (
+          <span className="flex aspect-square w-full items-center justify-center gap-2 text-[12px] text-mist">
+            <Spinner className="h-4 w-4" />
+            Rendering image…
+          </span>
+        )}
+        {state === "error" && (
+          <span className="flex aspect-square w-full flex-col items-center justify-center gap-1.5 px-4 text-center text-[12px] text-danger">
+            <ImageOff size={20} />
+            Image couldn’t be loaded.
+          </span>
+        )}
+        {/* eslint-disable-next-line @next/next/no-img-element */}
+        <img
+          src={src}
+          alt={alt || "Generated image"}
+          loading="lazy"
+          onLoad={() => setState("ok")}
+          onError={() => setState("error")}
+          className={clsx(
+            "h-auto w-full",
+            state === "ok" ? "block" : "hidden"
+          )}
+        />
+        {state === "ok" && (
+          <a
+            href={src}
+            download
+            className="absolute top-2 right-2 grid h-7 w-7 place-items-center rounded-lg border border-line bg-void/80 text-mist backdrop-blur transition-colors hover:text-frost"
+            aria-label="Download image"
+            title="Download"
+          >
+            <Download size={13} />
+          </a>
+        )}
+      </span>
+      {alt && state === "ok" && (
+        <span className="mt-1 block max-w-[420px] text-[11px] leading-snug text-faint">{alt}</span>
+      )}
+    </span>
   );
 }
 
@@ -184,6 +238,10 @@ export const MessageView = memo(function MessageView({
             remarkPlugins={[remarkGfm]}
             components={{
               pre: ({ children }) => <CodeBlock>{extractText(children)}</CodeBlock>,
+              img: ({ src, alt }) =>
+                typeof src === "string" ? <ChatImage src={src} alt={alt} /> : null,
+              // markdown images arrive inside a <p>; allow block children
+              p: ({ children }) => <p className="[&>span]:block">{children}</p>,
               a: ({ href, children }) => (
                 <a href={href} target="_blank" rel="noopener noreferrer">
                   {children}
