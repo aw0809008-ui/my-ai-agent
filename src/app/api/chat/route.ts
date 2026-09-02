@@ -1,6 +1,14 @@
 import { z } from "zod";
 import { db } from "@/db";
-import { conversations, messages, memories, files, usageEvents } from "@/db/schema";
+import {
+  conversations,
+  messages,
+  memories,
+  files,
+  usageEvents,
+  projects,
+  projectVersions,
+} from "@/db/schema";
 import { and, desc, eq, inArray } from "drizzle-orm";
 import { requireUser, type AuthUser } from "@/lib/auth";
 import { errResponse, apiError, limited, requestId, logEvent } from "@/lib/http";
@@ -14,6 +22,15 @@ import {
 import { executeTool, toolDescriptions, type ToolContext } from "@/lib/tools";
 import { detectImageGeneration, routeIntent } from "@/lib/intent";
 import { generateImage, ImageGenError, imageGenConfigured } from "@/lib/image-gen";
+import {
+  buildProjectPrompt,
+  detectWebAppBuild,
+  editProjectPrompt,
+  extractJson,
+  fixProjectPrompt,
+  isProjectEdit,
+  validateProject,
+} from "@/lib/webapp";
 import { topK } from "@/lib/embeddings";
 import { IMAGE_MIMES } from "@/lib/extract";
 
@@ -24,6 +41,10 @@ const bodySchema = z.object({
   conversationId: z.string().uuid().optional(),
   message: z.string().min(1).max(8000),
   fileIds: z.array(z.string().uuid()).max(4).optional(),
+  /** active web-app project — follow-up edits and "Fix it" target it */
+  projectId: z.string().uuid().optional(),
+  /** compile/runtime error forwarded from the sandboxed preview */
+  fixError: z.string().max(2000).optional(),
 });
 
 type Source = { title: string; url: string; snippet: string };
@@ -170,6 +191,14 @@ export async function POST(req: Request) {
     // ---- SSE stream ----------------------------------------------------------
     const encoder = new TextEncoder();
     const started = Date.now();
+    // Propagates client disconnect (Stop button / navigation) to the upstream
+    // provider so generation does NOT continue in the background.
+    const clientGone = new AbortController();
+    if (req.signal) {
+      if (req.signal.aborted) clientGone.abort();
+      else req.signal.addEventListener("abort", () => clientGone.abort(), { once: true });
+    }
+
     const stream = new ReadableStream({
       async start(controller) {
         const send = (event: string, data: unknown) =>
@@ -197,6 +226,30 @@ export async function POST(req: Request) {
           const imagePrompt = imageGenConfigured()
             ? detectImageGeneration(body.message, attachedImages.length > 0)
             : null;
+
+          // ---- web app builder context (owner-scoped) --------------------
+          let activeProject: {
+            id: string;
+            entry: string;
+            files: { path: string; content: string }[];
+          } | null = null;
+          if (body.projectId) {
+            const [row] = await db
+              .select()
+              .from(projects)
+              .where(and(eq(projects.id, body.projectId), eq(projects.userId, u.id)))
+              .limit(1);
+            if (row) activeProject = { id: row.id, entry: row.entry, files: row.files };
+          }
+          // fresh build, follow-up edit on an open project, or a preview fix
+          const buildBrief = attachedImages.length
+            ? null
+            : body.fixError && activeProject
+              ? body.message || "fix the error"
+              : activeProject && isProjectEdit(body.message)
+                ? body.message
+                : detectWebAppBuild(body.message);
+          let projectRef: string | null = activeProject?.id ?? null;
           let modelMeta: { name: string; fallback: boolean; category: string } | null = null;
           /** Route + stream one answer. Yields deltas; model metadata is sent
            *  via SSE automatically. Throws ALL_MODELS_UNAVAILABLE if the whole
@@ -218,7 +271,10 @@ export async function POST(req: Request) {
             category: Parameters<typeof streamBest>[1],
             maxTokens: number
           ): AsyncGenerator<string> {
-            const { events } = streamBest(msgs, category, { maxTokens });
+            const { events } = streamBest(msgs, category, {
+              maxTokens,
+              signal: clientGone.signal,
+            });
             for await (const ev of events) {
               if (ev.type === "model") {
                 modelMeta = { name: ev.name, fallback: ev.fallback, category: ev.category };
@@ -255,6 +311,125 @@ export async function POST(req: Request) {
                   ? `I can see you attached **${attachedImages[0].name}**, but no vision-capable model is configured. Set e.g. \`MODEL_NEMOTRON_OMNI\` + \`MODEL_NEMOTRON_OMNI_VISION=true\` (after verifying image input on openrouter.ai/models), or a self-hosted \`VISION_MODEL\`.`
                   : "The vision model failed to respond. Please try again."
               );
+            }
+          } else if (buildBrief !== null && aiUp) {
+            // ---------- web app builder (structured, validated) ------------
+            const editing = Boolean(activeProject);
+            const label = body.fixError
+              ? "Fixing app"
+              : editing
+                ? "Updating app"
+                : "Building app";
+            toolEvents.push({ name: "web_app_build", status: "running" });
+            send("tool", { name: "web_app_build", status: "running", label });
+
+            const prompt = body.fixError
+              ? fixProjectPrompt(body.fixError, activeProject!.files, activeProject!.entry)
+              : editing
+                ? editProjectPrompt(buildBrief, activeProject!.files, activeProject!.entry)
+                : buildProjectPrompt(buildBrief);
+
+            // Collect (not stream) — the payload is JSON, not prose.
+            let jsonText = "";
+            let genFailed: string | null = null;
+            try {
+              for await (const chunk of routed(
+                [
+                  {
+                    role: "system",
+                    content:
+                      "You are a senior frontend engineer. You reply with a single valid JSON object and no other text.",
+                  },
+                  { role: "user", content: prompt },
+                ],
+                "coding",
+                8000
+              )) {
+                jsonText += chunk;
+              }
+            } catch (e) {
+              genFailed =
+                e instanceof Error && e.message.startsWith("ALL_MODELS_UNAVAILABLE")
+                  ? "All coding models are unavailable right now. Please try again shortly."
+                  : "The build was interrupted.";
+            }
+
+            if (genFailed) {
+              toolEvents[toolEvents.length - 1].status = "error";
+              send("tool", { name: "web_app_build", status: "error", label });
+              pushAll(genFailed);
+            } else {
+              const check = validateProject(extractJson(jsonText));
+              if (!check.ok || !check.project) {
+                toolEvents[toolEvents.length - 1].status = "error";
+                send("tool", { name: "web_app_build", status: "error", label });
+                logEvent({ msg: "webapp_invalid", rid, error: check.error });
+                pushAll(
+                  `I couldn't produce a valid app project.\n\n**Reason:** ${check.error ?? "malformed project output"}\n\nTry rephrasing, or ask again — the model sometimes returns incomplete JSON.`
+                );
+              } else {
+                const proj = check.project;
+                let projectId = activeProject?.id ?? null;
+                if (activeProject) {
+                  // snapshot the previous state so the user can undo
+                  await db.insert(projectVersions).values({
+                    projectId: activeProject.id,
+                    userId: u.id,
+                    label: body.fixError ? "before fix" : "before edit",
+                    files: activeProject.files,
+                    entry: activeProject.entry,
+                  });
+                  await db
+                    .update(projects)
+                    .set({
+                      name: proj.name,
+                      entry: proj.entry,
+                      files: proj.files,
+                      updatedAt: new Date(),
+                    })
+                    .where(eq(projects.id, activeProject.id));
+                } else {
+                  const [row] = await db
+                    .insert(projects)
+                    .values({
+                      userId: u.id,
+                      conversationId: convId,
+                      name: proj.name,
+                      framework: "react",
+                      entry: proj.entry,
+                      files: proj.files,
+                    })
+                    .returning({ id: projects.id });
+                  projectId = row.id;
+                }
+
+                toolEvents[toolEvents.length - 1].status = "ok";
+                send("tool", { name: "web_app_build", status: "ok", label });
+                send("project", {
+                  id: projectId,
+                  name: proj.name,
+                  entry: proj.entry,
+                  fileCount: proj.files.length,
+                  files: proj.files.map((f) => f.path),
+                });
+                projectRef = projectId;
+
+                // compact chat summary — never dump the whole project
+                const changed = proj.files.map((f) => `\`${f.path}\``).join(", ");
+                pushAll(
+                  `**${proj.name}** — ${
+                    body.fixError ? "fixed" : editing ? "updated" : "created"
+                  }.\n\n${proj.summary ?? "Your app is ready in the workspace."}\n\n${proj.files.length} file${proj.files.length === 1 ? "" : "s"}: ${changed}`
+                );
+                await db
+                  .insert(usageEvents)
+                  .values({
+                    userId: u.id,
+                    kind: "web_app_build",
+                    meta: { projectId, files: proj.files.length, edit: editing },
+                  })
+                  .catch(() => {});
+              }
             }
           } else if (imagePrompt) {
             // ---------- image GENERATION path (separate from vision) -------
@@ -516,7 +691,7 @@ export async function POST(req: Request) {
             ms: Date.now() - started,
             tools: toolEvents.map((t) => t.name),
           });
-          send("done", { messageId: assistantMsg.id });
+          send("done", { messageId: assistantMsg.id, projectId: projectRef });
         } catch (e) {
           logEvent({
             msg: "chat_failed",
@@ -529,8 +704,17 @@ export async function POST(req: Request) {
             message: "The response was interrupted. Please try again.",
           });
         } finally {
-          controller.close();
+          try {
+            controller.close();
+          } catch {
+            /* already closed by client disconnect */
+          }
         }
+      },
+      cancel() {
+        // reader released (browser aborted the fetch) → stop upstream work
+        clientGone.abort();
+        logEvent({ msg: "chat_client_cancelled", rid });
       },
     });
 

@@ -238,7 +238,13 @@ export interface StreamOutcome {
 export function streamBest(
   messages: ChatMessage[],
   category: TaskCategory,
-  opts: { maxTokens?: number; temperature?: number; requiresTools?: boolean } = {}
+  opts: {
+    maxTokens?: number;
+    temperature?: number;
+    requiresTools?: boolean;
+    /** user pressed Stop / client disconnected — abort upstream, no fallback */
+    signal?: AbortSignal;
+  } = {}
 ): { events: AsyncGenerator<StreamEvent>; outcome: StreamOutcome } {
   const outcome: StreamOutcome = {
     modelName: null,
@@ -280,6 +286,7 @@ export function streamBest(
             maxTokens: opts.maxTokens,
             temperature: opts.temperature,
             timeoutMs: 120_000,
+            signal: opts.signal,
           })) {
             if (!emitted) {
               emitted = true;
@@ -311,6 +318,11 @@ export function streamBest(
           });
           return; // success
         } catch (e) {
+          // user cancellation: stop immediately, never try another model
+          if (opts.signal?.aborted) {
+            logEvent({ msg: "model_aborted", model: meta.key, category });
+            return;
+          }
           const cat = e instanceof OpenRouterError ? e.category : "network";
           failureCats.push(cat);
           logEvent({

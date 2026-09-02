@@ -313,6 +313,65 @@ export const notifications = pgTable(
   (t) => [index("notif_user_read_idx").on(t.userId, t.read)]
 );
 
+// ---------------------------------------------------------------------------
+// Web App Builder — generated projects + lightweight version snapshots.
+// Files are stored as JSON (never on disk) so this works on serverless.
+// Generated code is UNTRUSTED and is only ever executed inside a sandboxed,
+// null-origin iframe in the browser — never on the server.
+// ---------------------------------------------------------------------------
+
+export interface ProjectFile {
+  path: string;
+  content: string;
+}
+
+export const projects = pgTable(
+  "projects",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    userId: uuid("user_id")
+      .notNull()
+      .references(() => users.id, { onDelete: "cascade" }),
+    conversationId: uuid("conversation_id").references(() => conversations.id, {
+      onDelete: "set null",
+    }),
+    name: text("name").notNull().default("Untitled app"),
+    framework: text("framework").notNull().default("react"),
+    entry: text("entry").notNull().default("src/App.tsx"),
+    files: jsonb("files").$type<ProjectFile[]>().notNull().default([]),
+    createdAt: timestamp("created_at", { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+    updatedAt: timestamp("updated_at", { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+  },
+  (t) => [
+    index("proj_user_updated_idx").on(t.userId, t.updatedAt),
+    index("proj_conv_idx").on(t.conversationId),
+  ]
+);
+
+export const projectVersions = pgTable(
+  "project_versions",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    projectId: uuid("project_id")
+      .notNull()
+      .references(() => projects.id, { onDelete: "cascade" }),
+    userId: uuid("user_id")
+      .notNull()
+      .references(() => users.id, { onDelete: "cascade" }),
+    label: text("label").notNull().default("update"),
+    files: jsonb("files").$type<ProjectFile[]>().notNull().default([]),
+    entry: text("entry").notNull().default("src/App.tsx"),
+    createdAt: timestamp("created_at", { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+  },
+  (t) => [index("pv_project_created_idx").on(t.projectId, t.createdAt)]
+);
+
 export const usageEvents = pgTable(
   "usage_events",
   {

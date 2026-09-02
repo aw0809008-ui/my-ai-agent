@@ -20,6 +20,7 @@ import {
   Code2,
   Download,
   Globe,
+  LayoutTemplate,
   Menu,
   MoreVertical,
   Pencil,
@@ -35,6 +36,7 @@ import { MessageView } from "@/components/message-item";
 import { Orb, type OrbState } from "@/components/orb";
 import { Pressable, Spinner, inputCls } from "@/components/ui";
 import { VoiceOverlay } from "@/components/voice-overlay";
+import { WebAppWorkspace } from "@/components/webapp-workspace";
 import { api, authHeaders, type MessageItem } from "@/lib/client";
 import { speak, stopSpeech } from "@/lib/speech";
 import clsx from "clsx";
@@ -102,6 +104,7 @@ function ChatRoomInner({ id }: { id: string }) {
   const [editingTitle, setEditingTitle] = useState(false);
   const [titleDraft, setTitleDraft] = useState("");
   const [menuOpen, setMenuOpen] = useState(false);
+  const [confirmDelete, setConfirmDelete] = useState(false);
   const composerRef = useRef<ComposerHandle>(null);
   const scrollRef = useRef<HTMLDivElement>(null);
   const stickRef = useRef(true);
@@ -109,6 +112,10 @@ function ChatRoomInner({ id }: { id: string }) {
   const lastBotRef = useRef<string | null>(null);
   const abortRef = useRef<AbortController | null>(null);
   const sendRef = useRef<((t: string, f: string[]) => void) | null>(null);
+  const projectIdRef = useRef<string | null>(null);
+  const fixErrorRef = useRef<string | null>(null);
+  const [projectId, setProjectId] = useState<string | null>(null);
+  const [workspaceOpen, setWorkspaceOpen] = useState(false);
 
   // initial load
   useEffect(() => {
@@ -247,6 +254,8 @@ function ChatRoomInner({ id }: { id: string }) {
             conversationId: cid ?? undefined,
             message: text,
             fileIds: fileIds.length ? fileIds : undefined,
+            projectId: projectIdRef.current ?? undefined,
+            fixError: fixErrorRef.current ?? undefined,
           }),
         });
         if (!res.ok || !res.body) {
@@ -270,6 +279,10 @@ function ChatRoomInner({ id }: { id: string }) {
           } else if (event === "delta") {
             finalText += data.text;
             patchBot((m) => ({ ...m, content: m.content + data.text }));
+          } else if (event === "project") {
+            projectIdRef.current = data.id;
+            setProjectId(data.id);
+            setWorkspaceOpen(true);
           } else if (event === "model") {
             patchBot((m) => ({
               ...m,
@@ -324,12 +337,23 @@ function ChatRoomInner({ id }: { id: string }) {
           );
         }
       } finally {
+        fixErrorRef.current = null; // one-shot: never re-sent on later turns
         abortRef.current = null;
         busyRef.current = false;
         setBusy(false);
       }
     },
     [cid, speakIfEnabled]
+  );
+
+  /** Send the sandbox's compile/runtime error back to the assistant to repair. */
+  const fixPreview = useCallback(
+    (errorText: string) => {
+      if (busyRef.current) return;
+      fixErrorRef.current = errorText;
+      send("Fix the preview error in the app.", []);
+    },
+    [send]
   );
 
   // expose the latest send() to the mount effect (auto-send from Home)
@@ -542,15 +566,34 @@ function ChatRoomInner({ id }: { id: string }) {
                   >
                     <Download size={14} className="text-faint" /> Export markdown
                   </button>
-                  <button
-                    onClick={() => {
-                      setMenuOpen(false);
-                      deleteConversation();
-                    }}
-                    className="flex w-full items-center gap-2.5 border-t border-line px-3.5 py-2.5 text-[13px] text-danger hover:bg-card"
-                  >
-                    <Trash2 size={14} /> Delete chat
-                  </button>
+                  {confirmDelete ? (
+                    <span className="flex items-center gap-1 border-t border-line px-3 py-2">
+                      <span className="flex-1 text-[11.5px] text-mist">Delete this chat?</span>
+                      <button
+                        onClick={() => {
+                          setMenuOpen(false);
+                          setConfirmDelete(false);
+                          deleteConversation();
+                        }}
+                        className="rounded-md bg-danger/15 px-2 py-1 text-[11.5px] font-bold text-danger"
+                      >
+                        Delete
+                      </button>
+                      <button
+                        onClick={() => setConfirmDelete(false)}
+                        className="rounded-md px-2 py-1 text-[11.5px] text-mist"
+                      >
+                        Cancel
+                      </button>
+                    </span>
+                  ) : (
+                    <button
+                      onClick={() => setConfirmDelete(true)}
+                      className="flex w-full items-center gap-2.5 border-t border-line px-3.5 py-2.5 text-[13px] text-danger hover:bg-card"
+                    >
+                      <Trash2 size={14} /> Delete chat
+                    </button>
+                  )}
                 </motion.div>
               </>
             )}
@@ -657,6 +700,33 @@ function ChatRoomInner({ id }: { id: string }) {
           </AnimatePresence>
         </div>
       </div>
+
+      {/* generated web-app workspace (kept out of the message stream) */}
+      {projectId && workspaceOpen && (
+        <div className="shrink-0 border-t border-line bg-void px-3 pt-3 md:px-6">
+          <div className="mx-auto w-full max-w-[820px]">
+            <WebAppWorkspace
+              projectId={projectId}
+              busy={busy}
+              onClose={() => setWorkspaceOpen(false)}
+              onFix={fixPreview}
+            />
+          </div>
+        </div>
+      )}
+      {projectId && !workspaceOpen && (
+        <div className="shrink-0 px-3 pt-2 md:px-6">
+          <div className="mx-auto w-full max-w-[820px]">
+            <Pressable
+              onClick={() => setWorkspaceOpen(true)}
+              className="flex w-full items-center gap-2 rounded-xl border border-line bg-card px-3 py-2 text-[12.5px] font-medium text-mist hover:border-line-strong hover:text-frost"
+            >
+              <LayoutTemplate size={14} className="text-violet" />
+              Open app workspace
+            </Pressable>
+          </div>
+        </div>
+      )}
 
       <Composer
         ref={composerRef}

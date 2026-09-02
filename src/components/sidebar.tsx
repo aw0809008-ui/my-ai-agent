@@ -14,6 +14,8 @@ import {
   Plus,
   Settings,
   Shield,
+  Trash2,
+  X,
 } from "lucide-react";
 import clsx from "clsx";
 import { api, relTime, type ConversationItem } from "@/lib/client";
@@ -48,6 +50,24 @@ export function Sidebar({
   const pathname = usePathname();
   const [convos, setConvos] = useState<ConversationItem[]>([]);
   const [loaded, setLoaded] = useState(false);
+  const [confirmId, setConfirmId] = useState<string | null>(null);
+
+  /** Delete with server-side ownership enforcement; clears stale client state
+   *  and navigates away when the open conversation is the one removed. */
+  const remove = async (id: string) => {
+    setConfirmId(null);
+    setConvos((prev) => prev.filter((c) => c.id !== id)); // immediate removal
+    try {
+      await api(`/api/conversations/${id}`, { method: "DELETE" });
+    } catch {
+      load(); // restore on failure
+      return;
+    }
+    if (pathname === `/chat/${id}`) {
+      router.push("/chat/new");
+      onMobileClose();
+    }
+  };
 
   const load = useCallback(() => {
     api<{ items: ConversationItem[] }>("/api/conversations")
@@ -179,22 +199,57 @@ export function Sidebar({
                 <div className="grid gap-0.5">
                   {convos.map((c) => {
                     const active = activeConvo === c.id;
+                    const confirming = confirmId === c.id;
                     return (
-                      <button
+                      <div
                         key={c.id}
-                        onClick={() => go(`/chat/${c.id}`)}
-                        title={c.title}
-                        aria-current={active ? "page" : undefined}
                         className={clsx(
-                          "group flex w-full items-center gap-2 rounded-lg px-2.5 py-1.5 text-left transition-colors",
-                          active ? "bg-elev text-frost" : "text-mist hover:bg-elev/60 hover:text-frost"
+                          "group flex w-full items-center gap-1 rounded-lg pr-1 transition-colors",
+                          active ? "bg-elev" : "hover:bg-elev/60"
                         )}
                       >
-                        <span className="min-w-0 flex-1 truncate text-[13px]">{c.title}</span>
-                        <span className="shrink-0 text-[10px] text-faint opacity-0 transition-opacity group-hover:opacity-100">
-                          {relTime(c.updatedAt)}
-                        </span>
-                      </button>
+                        <button
+                          onClick={() => go(`/chat/${c.id}`)}
+                          title={c.title}
+                          aria-current={active ? "page" : undefined}
+                          className={clsx(
+                            "min-w-0 flex-1 truncate px-2.5 py-1.5 text-left text-[13px] transition-colors",
+                            active ? "text-frost" : "text-mist group-hover:text-frost"
+                          )}
+                        >
+                          {c.title}
+                        </button>
+                        {confirming ? (
+                          <span className="flex shrink-0 items-center gap-0.5">
+                            <button
+                              onClick={() => remove(c.id)}
+                              className="rounded-md px-1.5 py-1 text-[10.5px] font-bold text-danger hover:bg-danger/12"
+                              aria-label={`Confirm delete ${c.title}`}
+                            >
+                              Delete
+                            </button>
+                            <button
+                              onClick={() => setConfirmId(null)}
+                              className="grid h-6 w-6 place-items-center rounded-md text-faint hover:text-frost"
+                              aria-label="Cancel delete"
+                            >
+                              <X size={12} />
+                            </button>
+                          </span>
+                        ) : (
+                          <button
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              setConfirmId(c.id);
+                            }}
+                            className="grid h-6 w-6 shrink-0 place-items-center rounded-md text-faint opacity-0 transition-opacity group-hover:opacity-100 focus-visible:opacity-100 hover:bg-card hover:text-danger"
+                            aria-label={`Delete conversation ${c.title}`}
+                            title="Delete"
+                          >
+                            <Trash2 size={12} />
+                          </button>
+                        )}
+                      </div>
                     );
                   })}
                   <button

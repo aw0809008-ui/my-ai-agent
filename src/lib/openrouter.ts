@@ -181,19 +181,21 @@ const RETRYABLE_STATUSES = new Set([408, 409, 429, 500, 502, 503, 504]);
 async function fetchWithRetry(
   url: string,
   init: RequestInit,
-  opts: { timeoutMs: number; maxAttempts: number }
+  opts: { timeoutMs: number; maxAttempts: number; signal?: AbortSignal }
 ): Promise<Response> {
   const backoffs = [0, 500, 1500];
   let lastErr: unknown = null;
   for (let attempt = 0; attempt < opts.maxAttempts; attempt++) {
+    if (opts.signal?.aborted) throw new DOMException("aborted", "AbortError");
     if (backoffs[attempt]) {
       await new Promise((r) => setTimeout(r, backoffs[attempt]));
     }
     try {
-      const res = await fetch(url, {
-        ...init,
-        signal: AbortSignal.timeout(opts.timeoutMs),
-      });
+      // combine the caller's cancellation with the request timeout
+      const signal = opts.signal
+        ? AbortSignal.any([opts.signal, AbortSignal.timeout(opts.timeoutMs)])
+        : AbortSignal.timeout(opts.timeoutMs);
+      const res = await fetch(url, { ...init, signal });
       if (RETRYABLE_STATUSES.has(res.status) && attempt + 1 < opts.maxAttempts) {
         lastErr = new OpenRouterError(`provider ${res.status}`, res.status, true);
         continue;
@@ -229,6 +231,8 @@ async function fetchWithRetry(
       }
       return res;
     } catch (e) {
+      // user-initiated cancellation must never be retried or fallen back from
+      if (e instanceof DOMException && e.name === "AbortError" && opts.signal?.aborted) throw e;
       if (e instanceof OpenRouterError) {
         if (!e.retryable || attempt + 1 >= opts.maxAttempts) throw e;
         lastErr = e;
@@ -259,6 +263,8 @@ export interface CallOptions {
   maxTokens?: number;
   temperature?: number;
   timeoutMs?: number;
+  /** caller-side cancellation (user pressed Stop / client disconnected) */
+  signal?: AbortSignal;
   /** JSON mode — only sent if meta.supportsStructuredOutput */
   jsonMode?: boolean;
   /** native function calling — only sent if meta.supportsTools */
@@ -303,7 +309,7 @@ export async function chatOnce(
       headers: headers(),
       body: JSON.stringify(buildBody(messages, meta, false, opts)),
     },
-    { timeoutMs: opts.timeoutMs ?? 45_000, maxAttempts: 2 }
+    { timeoutMs: opts.timeoutMs ?? 45_000, maxAttempts: 2, signal: opts.signal }
   );
   let json: unknown;
   try {
@@ -357,7 +363,7 @@ export async function* streamOnce(
       headers: headers(),
       body: JSON.stringify(buildBody(messages, meta, true, opts)),
     },
-    { timeoutMs: opts.timeoutMs ?? 120_000, maxAttempts: 2 }
+    { timeoutMs: opts.timeoutMs ?? 120_000, maxAttempts: 2, signal: opts.signal }
   );
   if (!res.body) throw new OpenRouterError("no response body", res.status, true);
 

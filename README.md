@@ -217,6 +217,35 @@ SearXNG (SEARXNG_URL, self-hosted — most reliable)
   probe is temporarily down, registry-assigned vision models stay candidates so a
   transient hiccup doesn't hard-fail the flow; the provider request is the verdict.
 
+## 6d. Web App Builder (sandboxed live preview)
+
+"Build me an ecommerce landing page" produces a real, running React app.
+
+```
+prompt → detectWebAppBuild → structured JSON generation (coding chain:
+MiniMax M3 → M2.7 → Laguna → GLM) → zod validation → projects table
+→ sandboxed iframe preview → follow-up edits / "Fix it"
+```
+
+- **Structured output**: the model must return one JSON project object
+  (`name/framework/entry/files[]`). Zod-validated; malformed output is rejected
+  with an honest message — never rendered.
+- **Security**: generated code is untrusted and **never executes on the server**
+  (no eval, no child process, no filesystem). It runs only inside an iframe with
+  `sandbox="allow-scripts"` and **no** `allow-same-origin`, so it has a null
+  origin: no cookies, no localStorage, no parent DOM, no authenticated calls to
+  our APIs. Compilation (Babel standalone) happens inside that sandbox.
+  A server-side denylist additionally rejects `process.env`, `document.cookie`,
+  `localStorage`, `window.parent`, `/api/*` fetches, `require()` and remote
+  dynamic imports, plus path traversal and non-source file types.
+- **Stack**: React 18 + TypeScript + Tailwind (CDN). No npm installs, no server
+  processes, no Python — by design for v1.
+- **Workspace UI**: Preview | Code tabs, file tree, copy, refresh, mobile-width
+  toggle, fullscreen, compile/runtime error panel with **Fix it** (sends the
+  sanitized error back to the model), and version snapshots for undo/restore.
+- **Persistence**: `projects` + `project_versions`, scoped by `userId`; every
+  read/update/delete is ownership-checked (cross-user access returns 404).
+
 ## 7. Tools (function calling)
 
 Internal registry: `search_web`, `save_memory`, `search_memory`, `delete_memory`,
