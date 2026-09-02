@@ -202,8 +202,11 @@ export function selectModels(
   const sorted = [...candidates].sort(
     (a, b) => rankForTask(a, category) - rankForTask(b, category)
   );
-  // max 3 models total (best + 2 fallbacks) — free-tier friendly, no fan-out
-  return { best: sorted[0] ?? null, chain: sorted.slice(1, 3), drop };
+  // best + up to 3 fallbacks (4 models max) — deep enough for the explicit
+  // coding chain MiniMax M3 → MiniMax M2.7 → Laguna → GLM, still bounded so a
+  // total outage can't fan out into unbounded retries. One model per request
+  // in the happy path; deeper entries are only reached on actual failure.
+  return { best: sorted[0] ?? null, chain: sorted.slice(1, 4), drop };
 }
 
 function estimateTokens(messages: ChatMessage[]): number {

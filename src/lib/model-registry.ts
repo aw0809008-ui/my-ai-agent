@@ -75,11 +75,13 @@ interface ModelDefault {
 // overridable via env; multimodal stays OFF unless explicitly enabled.
 // Routing matrix (rank 1 = primary for that task). Derived from the owner's
 // routing rules:
-//   general: GLM → Gemma | coding/debugging: MiniMax → Laguna → GLM
+//   general: GLM → Gemma | coding/debugging: MiniMax M3 → MiniMax M2.7 → Laguna → GLM
 //   hard reasoning: Nemotron Super → GLM → Gemma | planning: Nemotron → GLM → MiniMax
 //   writing: GLM → Gemma | summarization: Gemma → GLM
-//   agent/tools: GLM → MiniMax → Nemotron | multimodal: Omni → Gemma(if verified)
+//   agent/tools: GLM → MiniMax M3 → MiniMax M2.7 → Nemotron
+//   multimodal: Omni → Gemma(if verified)
 //   web research synthesis: GLM → Nemotron (MiniMax via coding classification)
+// MODEL_MINIMAX_FALLBACK is optional and only enters chains behind MiniMax M3.
 const DEFAULTS: ModelDefault[] = [
   {
     key: "glm",
@@ -94,14 +96,35 @@ const DEFAULTS: ModelDefault[] = [
   },
   {
     key: "minimax",
-    displayName: "MiniMax M2.5",
+    displayName: "MiniMax M3",
     envVar: "MODEL_MINIMAX",
     taskTypes: { coding: 1, debugging: 1, tool_execution: 2, planning: 3, reasoning: 5, general_chat: 4, file_analysis: 4, structured_output: 3, research: 5, web_research: 3, writing: 6, summarization: 5 },
     tools: true,
     structured: true,
     reasoning: false,
-    maxContext: 128_000,
+    // provider-verified: minimax/minimax-m3:free context_length = 1,048,576
+    maxContext: 1_048_576,
     fallbackPriority: 2,
+  },
+  {
+    // FALLBACK ONLY — slots directly behind MiniMax M3 for MiniMax's own roles
+    // (coding / debugging / agent-tools). Never a primary while M3 is healthy.
+    // Enabled only when MODEL_MINIMAX_FALLBACK is set.
+    key: "minimax_fallback",
+    displayName: "MiniMax M2.7",
+    envVar: "MODEL_MINIMAX_FALLBACK",
+    taskTypes: {
+      coding: 1.5,
+      debugging: 1.5,
+      tool_execution: 2.5,
+      structured_output: 3.5,
+    },
+    tools: true,
+    structured: true,
+    reasoning: false,
+    // provider-verified: minimax/minimax-m2.7:free context_length = 196,608
+    maxContext: 196_608,
+    fallbackPriority: 2.5,
   },
   {
     key: "nemotron_super",
