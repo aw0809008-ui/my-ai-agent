@@ -11,7 +11,20 @@ import {
 } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import { AnimatePresence, motion } from "framer-motion";
-import { ArrowLeft, Check, ChevronUp, Pencil, RotateCcw, Volume2, X } from "lucide-react";
+import {
+  AlarmClock,
+  ArrowLeft,
+  Brain,
+  Check,
+  ChevronUp,
+  Code2,
+  Globe,
+  Menu,
+  Pencil,
+  RotateCcw,
+  Volume2,
+  X,
+} from "lucide-react";
 import { useShell } from "@/components/app-shell";
 import { Composer, type ComposerHandle } from "@/components/composer";
 import { MessageView } from "@/components/message-item";
@@ -26,18 +39,38 @@ interface ChatMsg extends MessageItem {
   streaming?: boolean;
 }
 
-const SUGGESTIONS = [
-  "Search the web for today's space news",
-  "Remind me tomorrow at 9am to call Ali",
-  "Remember that I prefer concise replies",
-  "What do you remember about me?",
+const SUGGESTIONS: { icon: typeof Globe; label: string; prompt: string; hint: string }[] = [
+  {
+    icon: Globe,
+    label: "Search the latest AI news",
+    prompt: "Search the web for the latest AI news today",
+    hint: "Web search + sources",
+  },
+  {
+    icon: Code2,
+    label: "Debug my Python code",
+    prompt: "Debug this Python function — it throws TypeError: NoneType is not iterable\n\n```python\n\n```",
+    hint: "MiniMax M3",
+  },
+  {
+    icon: Brain,
+    label: "Remember something about me",
+    prompt: "Remember that I prefer concise replies",
+    hint: "Long-term memory",
+  },
+  {
+    icon: AlarmClock,
+    label: "Set a reminder",
+    prompt: "Remind me tomorrow at 9 AM to review the roadmap",
+    hint: "Works offline of the LLM",
+  },
 ];
 
 function ChatRoomInner({ id }: { id: string }) {
   const router = useRouter();
   const params = useSearchParams();
   const { settings, user } = useUnwrapShell();
-  const { toast } = useShell();
+  const { toast, openNav } = useShell();
   const [cid, setCid] = useState<string | null>(id === "new" ? null : id);
   const [title, setTitle] = useState("New conversation");
   const [messages, setMessages] = useState<ChatMsg[]>([]);
@@ -301,17 +334,24 @@ function ChatRoomInner({ id }: { id: string }) {
   return (
     <div className="relative flex h-full min-h-0 flex-col">
       {/* header */}
-      <div className="z-10 flex items-center gap-2 border-b border-line/60 bg-void/80 px-3 py-2.5 backdrop-blur-xl lg:px-6">
+      <div className="z-10 flex items-center gap-2 border-b border-line bg-void/85 px-3 py-2.5 backdrop-blur-xl lg:px-6">
         <div className="mx-auto flex w-full max-w-[820px] items-center gap-2">
         <Pressable
+          onClick={openNav}
+          className="grid h-9 w-9 shrink-0 place-items-center rounded-xl text-mist hover:bg-elev hover:text-frost lg:hidden"
+          aria-label="Open navigation"
+        >
+          <Menu size={18} />
+        </Pressable>
+        <Pressable
           onClick={() => router.push("/chat")}
-          className="grid h-9 w-9 shrink-0 place-items-center rounded-full text-mist hover:bg-elev hover:text-frost"
-          aria-label="Back"
+          className="hidden h-9 w-9 shrink-0 place-items-center rounded-xl text-mist hover:bg-elev hover:text-frost lg:grid"
+          aria-label="Back to conversations"
         >
           <ArrowLeft size={18} />
         </Pressable>
         <div className="grid shrink-0 place-items-center">
-          <Orb state={orbState} size={34} />
+          <Orb state={orbState} size={30} />
         </div>
         <div className="min-w-0 flex-1">
           {editingTitle ? (
@@ -390,31 +430,34 @@ function ChatRoomInner({ id }: { id: string }) {
           )}
 
           {messages.length === 0 && !busy && (
-            <div className="flex flex-col items-center gap-6 pt-10">
-              <Orb state="idle" size={150} />
+            <div className="flex flex-col items-center gap-5 pt-8 pb-2">
+              <Orb state="idle" size={104} />
               <div className="text-center">
-                <p className="font-display text-[18px] font-semibold">
+                <h2 className="font-display text-[19px] font-semibold tracking-tight">
                   What can I help you with?
-                </p>
+                </h2>
                 <p className="mt-1 text-[12.5px] text-faint">
-                  Streaming answers · tools · memory · sources
+                  Ask anything, attach an image, or use a tool below.
                 </p>
               </div>
-              <div className="flex w-full flex-col gap-2 lg:grid lg:grid-cols-2">
+              <div className="grid w-full gap-2 sm:grid-cols-2">
                 {SUGGESTIONS.map((s, i) => (
-                  <motion.div
-                    key={s}
-                    initial={{ opacity: 0, y: 10 }}
+                  <motion.button
+                    key={s.label}
+                    initial={{ opacity: 0, y: 8 }}
                     animate={{ opacity: 1, y: 0 }}
-                    transition={{ delay: 0.07 * i }}
+                    transition={{ delay: 0.05 * i, duration: 0.2 }}
+                    onClick={() => send(s.prompt, [])}
+                    className="group flex items-start gap-3 rounded-xl border border-line bg-card p-3 text-left transition-colors hover:border-line-strong hover:bg-elev"
                   >
-                    <Pressable
-                      onClick={() => send(s, [])}
-                      className="w-full rounded-2xl border border-line bg-card px-4 py-3 text-left text-[13px] text-mist hover:border-violet/40 hover:text-frost"
-                    >
-                      {s}
-                    </Pressable>
-                  </motion.div>
+                    <span className="mt-0.5 grid h-7 w-7 shrink-0 place-items-center rounded-lg bg-elev text-violet transition-colors group-hover:bg-violet/12">
+                      <s.icon size={14} strokeWidth={1.9} />
+                    </span>
+                    <span className="min-w-0">
+                      <span className="block text-[13px] font-medium text-frost">{s.label}</span>
+                      <span className="block text-[11px] text-faint">{s.hint}</span>
+                    </span>
+                  </motion.button>
                 ))}
               </div>
             </div>

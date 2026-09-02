@@ -8,6 +8,7 @@ import {
   AlarmClockPlus,
   Brain,
   Check,
+  ChevronDown,
   Clock,
   Copy,
   FileSearch,
@@ -21,41 +22,59 @@ import {
 import type { MessageItem as Msg } from "@/lib/client";
 import clsx from "clsx";
 
-const TOOL_ICONS: Record<string, typeof Globe> = {
-  search_web: Globe,
-  save_memory: Brain,
-  search_memory: Brain,
-  delete_memory: Brain,
-  create_note: NotebookPen,
-  search_notes: Search,
-  create_reminder: AlarmClockPlus,
-  list_reminders: ListChecks,
-  get_current_time: Clock,
-  analyze_file: FileSearch,
-  analyze_image: ImageIcon,
+const TOOL_META: Record<string, { icon: typeof Globe; running: string; done: string }> = {
+  search_web: { icon: Globe, running: "Searching the web", done: "Web search complete" },
+  save_memory: { icon: Brain, running: "Saving memory", done: "Memory saved" },
+  search_memory: { icon: Brain, running: "Searching memory", done: "Memory searched" },
+  delete_memory: { icon: Brain, running: "Deleting memory", done: "Memory deleted" },
+  create_note: { icon: NotebookPen, running: "Creating note", done: "Note created" },
+  search_notes: { icon: Search, running: "Searching notes", done: "Notes searched" },
+  create_reminder: { icon: AlarmClockPlus, running: "Creating reminder", done: "Reminder created" },
+  list_reminders: { icon: ListChecks, running: "Loading reminders", done: "Reminders loaded" },
+  get_current_time: { icon: Clock, running: "Checking time", done: "Time checked" },
+  analyze_file: { icon: FileSearch, running: "Reading document", done: "Document read" },
+  analyze_image: { icon: ImageIcon, running: "Reading image", done: "Image analysed" },
 };
 
-function CodeBlock({ className, children }: { className?: string; children?: React.ReactNode }) {
+function CodeBlock({ children }: { children?: React.ReactNode }) {
   const [copied, setCopied] = useState(false);
   const text = String(children ?? "").replace(/\n$/, "");
   return (
-    <div className="relative">
+    <div className="group/code relative">
       <button
         onClick={() => {
           navigator.clipboard?.writeText(text).catch(() => {});
           setCopied(true);
           setTimeout(() => setCopied(false), 1400);
         }}
-        className="absolute top-2 right-2 grid h-7 w-7 place-items-center rounded-lg border border-line bg-elev/80 text-mist hover:text-frost"
-        aria-label="Copy code"
+        className="absolute top-2 right-2 grid h-7 w-7 place-items-center rounded-lg border border-line bg-elev text-mist opacity-0 transition-opacity group-hover/code:opacity-100 focus-visible:opacity-100 hover:text-frost"
+        aria-label={copied ? "Code copied" : "Copy code"}
       >
         {copied ? <Check size={13} className="text-mint" /> : <Copy size={13} />}
       </button>
-      <pre className={className}>
+      <pre>
         <code>{text}</code>
       </pre>
     </div>
   );
+}
+
+function extractText(node: React.ReactNode): string {
+  if (node == null || typeof node === "boolean") return "";
+  if (typeof node === "string" || typeof node === "number") return String(node);
+  if (Array.isArray(node)) return node.map(extractText).join("");
+  if (typeof node === "object" && "props" in node) {
+    return extractText((node.props as { children?: React.ReactNode }).children);
+  }
+  return "";
+}
+
+function hostOf(url: string): string {
+  try {
+    return new URL(url).hostname.replace(/^www\./, "");
+  } catch {
+    return url;
+  }
 }
 
 export const MessageView = memo(function MessageView({
@@ -65,53 +84,58 @@ export const MessageView = memo(function MessageView({
   m: Msg;
   streaming?: boolean;
 }) {
+  const [sourcesOpen, setSourcesOpen] = useState(false);
+
   if (m.role === "user") {
     return (
       <motion.div
-        initial={{ opacity: 0, y: 8 }}
+        initial={{ opacity: 0, y: 6 }}
         animate={{ opacity: 1, y: 0 }}
-        className="flex justify-end pl-12"
+        transition={{ duration: 0.18 }}
+        className="flex justify-end pl-10 sm:pl-20"
       >
-        <div
-          className="max-w-full rounded-3xl rounded-br-lg px-4 py-2.5 text-[14px] leading-relaxed break-words whitespace-pre-wrap text-white"
-          style={{
-            background: "linear-gradient(135deg, #6d6af8, #7c5cfc 60%, #4a8dff)",
-          }}
-        >
+        <div className="max-w-full rounded-2xl rounded-br-md border border-violet/25 bg-violet/12 px-3.5 py-2.5 text-[14px] leading-relaxed break-words whitespace-pre-wrap text-frost">
           {m.content}
         </div>
       </motion.div>
     );
   }
 
+  const tools = m.toolEvents ?? [];
+  const sources = m.sources ?? [];
+  const searchUsed = tools.some((t) => t.name === "search_web" && t.status === "ok");
+
   return (
     <motion.div
-      initial={{ opacity: 0, y: 8 }}
+      initial={{ opacity: 0, y: 6 }}
       animate={{ opacity: 1, y: 0 }}
-      className="pr-2"
+      transition={{ duration: 0.18 }}
+      className="pr-1"
     >
-      {/* tool chips */}
-      {m.toolEvents && m.toolEvents.length > 0 && (
-        <div className="mb-2 flex flex-wrap gap-1.5">
-          {m.toolEvents.map((t, i) => {
-            const Icon = TOOL_ICONS[t.name] ?? Wrench;
+      {/* compact tool status line */}
+      {tools.length > 0 && (
+        <div className="mb-2 flex flex-wrap items-center gap-x-3 gap-y-1">
+          {tools.map((t, i) => {
+            const meta = TOOL_META[t.name] ?? { icon: Wrench, running: t.name, done: t.name };
+            const Icon = meta.icon;
+            const running = t.status === "running";
+            const error = t.status === "error";
             return (
               <span
                 key={i}
                 className={clsx(
-                  "flex items-center gap-1.5 rounded-full border px-2.5 py-1 text-[10.5px] font-semibold tracking-wide",
-                  t.status === "running"
-                    ? "border-violet/40 bg-violet/10 text-violet"
-                    : t.status === "error"
-                      ? "border-danger/40 bg-danger/10 text-danger"
-                      : "border-line bg-card text-mist"
+                  "inline-flex items-center gap-1.5 text-[11.5px] font-medium",
+                  error ? "text-danger" : running ? "text-violet" : "text-faint"
                 )}
               >
-                <Icon size={11} />
-                {t.name.replace(/_/g, " ")}
-                {t.status === "running" && (
-                  <span className="h-1.5 w-1.5 animate-pulse rounded-full bg-violet" />
+                {error ? (
+                  <Icon size={12} />
+                ) : running ? (
+                  <Icon size={12} className="animate-pulse" />
+                ) : (
+                  <Check size={12} className="text-mint" />
                 )}
+                {error ? `${meta.running} failed` : running ? `${meta.running}…` : meta.done}
               </span>
             );
           })}
@@ -119,7 +143,7 @@ export const MessageView = memo(function MessageView({
       )}
 
       {m.content ? (
-        <div className="md text-[14.2px] text-frost/95">
+        <div className="md text-frost/95">
           <ReactMarkdown
             remarkPlugins={[remarkGfm]}
             components={{
@@ -134,65 +158,95 @@ export const MessageView = memo(function MessageView({
             {m.content}
           </ReactMarkdown>
           {streaming && (
-            <span className="ml-0.5 inline-block h-[15px] w-[7px] animate-caret rounded-[2px] bg-violet align-[-2px]" />
+            <span className="ml-0.5 inline-block h-[15px] w-[6px] animate-caret rounded-[1px] bg-violet align-[-2px]" />
           )}
         </div>
       ) : streaming ? (
-        <p className="shimmer-text font-display text-[13px] font-medium">Thinking…</p>
+        <div className="flex items-center gap-2 text-[13px] text-mist" aria-live="polite">
+          <span className="flex gap-1" aria-hidden>
+            <span className="dot h-1.5 w-1.5 rounded-full bg-violet" />
+            <span className="dot h-1.5 w-1.5 rounded-full bg-violet" />
+            <span className="dot h-1.5 w-1.5 rounded-full bg-violet" />
+          </span>
+          Thinking…
+        </div>
       ) : null}
 
-      {/* which model answered (subtle, safe metadata only) */}
-      {m.model && !streaming && (
-        <p className="mt-1.5 text-[10px] font-medium tracking-wide text-faint">
-          {m.model}
-        </p>
+      {/* footer: model + sources toggle */}
+      {(m.model || sources.length > 0) && !streaming && (
+        <div className="mt-2.5 flex flex-wrap items-center gap-x-3 gap-y-1.5">
+          {m.model && (
+            <span className="text-[10.5px] font-medium tracking-wide text-faint">
+              {m.model.replace(" (fallback)", "")}
+              {m.model.includes("(fallback)") && (
+                <span className="text-amber"> · fallback</span>
+              )}
+            </span>
+          )}
+          {searchUsed && sources.length > 0 && (
+            <button
+              onClick={() => setSourcesOpen((s) => !s)}
+              aria-expanded={sourcesOpen}
+              className="inline-flex items-center gap-1 rounded-md text-[10.5px] font-medium text-mist transition-colors hover:text-frost"
+            >
+              <Globe size={11} />
+              {sources.length} {sources.length === 1 ? "source" : "sources"}
+              <ChevronDown
+                size={11}
+                className={clsx("transition-transform", sourcesOpen && "rotate-180")}
+              />
+            </button>
+          )}
+        </div>
       )}
 
-      {/* source cards */}
-      {m.sources && m.sources.length > 0 && (
-        <div className="no-scrollbar -mx-1 mt-3 flex gap-2 overflow-x-auto px-1 pb-1">
-          {m.sources.map((s, i) => {
-            let host = s.url;
-            try {
-              host = new URL(s.url).hostname.replace(/^www\./, "");
-            } catch {}
+      {/* expandable, compact source list */}
+      {sourcesOpen && sources.length > 0 && (
+        <motion.ul
+          initial={{ opacity: 0, height: 0 }}
+          animate={{ opacity: 1, height: "auto" }}
+          className="mt-2 grid gap-px overflow-hidden rounded-xl border border-line bg-line/40"
+        >
+          {sources.map((s, i) => {
+            const host = hostOf(s.url);
             return (
-              <a
-                key={i}
-                href={s.url}
-                target="_blank"
-                rel="noopener noreferrer"
-                className="w-56 shrink-0 rounded-2xl border border-line bg-card p-3 transition-colors hover:border-violet/40"
-              >
-                <div className="flex items-center gap-2">
-                  <span className="grid h-6 w-6 shrink-0 place-items-center rounded-lg bg-violet/15 text-[10px] font-bold text-violet uppercase">
-                    {host.slice(0, 2)}
+              <li key={i}>
+                <a
+                  href={s.url}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="flex items-start gap-2.5 bg-card p-2.5 transition-colors hover:bg-elev"
+                >
+                  {/* favicon with graceful fallback */}
+                  {/* eslint-disable-next-line @next/next/no-img-element */}
+                  <img
+                    src={`https://icons.duckduckgo.com/ip3/${host}.ico`}
+                    alt=""
+                    width={16}
+                    height={16}
+                    loading="lazy"
+                    className="mt-0.5 h-4 w-4 shrink-0 rounded-sm bg-elev"
+                    onError={(e) => {
+                      e.currentTarget.style.visibility = "hidden";
+                    }}
+                  />
+                  <span className="min-w-0 flex-1">
+                    <span className="block truncate text-[12.5px] font-medium text-frost">
+                      {s.title}
+                    </span>
+                    <span className="block truncate text-[11px] text-faint">{host}</span>
+                    {s.snippet && (
+                      <span className="mt-0.5 line-clamp-2 block text-[11.5px] leading-snug text-mist">
+                        {s.snippet}
+                      </span>
+                    )}
                   </span>
-                  <span className="truncate text-[11px] font-medium text-mist">{host}</span>
-                </div>
-                <p className="mt-2 line-clamp-2 text-[12.5px] leading-snug font-medium text-frost">
-                  {s.title}
-                </p>
-                {s.snippet && (
-                  <p className="mt-1 line-clamp-2 text-[11.5px] leading-snug text-faint">
-                    {s.snippet}
-                  </p>
-                )}
-              </a>
+                </a>
+              </li>
             );
           })}
-        </div>
+        </motion.ul>
       )}
     </motion.div>
   );
 });
-
-function extractText(node: React.ReactNode): string {
-  if (node == null || typeof node === "boolean") return "";
-  if (typeof node === "string" || typeof node === "number") return String(node);
-  if (Array.isArray(node)) return node.map(extractText).join("");
-  if (typeof node === "object" && "props" in node) {
-    return extractText((node.props as { children?: React.ReactNode }).children);
-  }
-  return "";
-}

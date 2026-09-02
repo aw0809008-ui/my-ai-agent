@@ -101,24 +101,19 @@ export default function HomePage() {
       </div>
 
       <div className="lg:mx-auto lg:max-w-[880px]">
-      {/* orb */}
-      <div className="mt-4 flex flex-col items-center lg:mt-8">
-        <motion.div whileTap={{ scale: 0.97 }} className="lg:scale-110">
-          <Orb
-            state={orbTap ? "thinking" : ai.reachable ? "idle" : "offline"}
-            size={196}
-          />
-        </motion.div>
-        <p className="mt-4 text-center font-display text-[18px] font-medium text-frost lg:text-[22px]">
+      {/* compact hero */}
+      <div className="mt-5 flex flex-col items-center">
+        <Orb state={orbTap ? "thinking" : ai.reachable ? "idle" : "offline"} size={112} />
+        <p className="mt-3.5 text-center font-display text-[17px] font-semibold tracking-tight text-frost">
           What can I help you with?
         </p>
-        <p className="mt-1 text-center text-[12.5px] text-faint">
-          Private · Self-hosted · remembers what matters
+        <p className="mt-1 text-center text-[12px] text-faint">
+          Private by design · remembers what matters
         </p>
       </div>
 
       {/* quick actions */}
-      <div className="mt-7 grid grid-cols-3 gap-2.5 lg:grid-cols-6 lg:gap-3 lg:mt-9">
+      <div className="mt-6 grid grid-cols-3 gap-2 lg:grid-cols-6 lg:gap-2.5">
         {QUICK.map((q, i) => (
           <motion.div
             key={q.label}
@@ -128,10 +123,10 @@ export default function HomePage() {
           >
             <Pressable
               onClick={() => router.push(q.href)}
-              className="flex w-full flex-col items-center gap-2 rounded-2xl border border-line bg-card px-2 py-4 hover:border-violet/40 hover:bg-elev"
+              className="flex w-full flex-col items-center gap-2 rounded-xl border border-line bg-card px-2 py-3.5 transition-colors hover:border-line-strong hover:bg-elev"
             >
-              <q.icon size={19} strokeWidth={1.7} className="text-violet" />
-              <span className="text-[11px] leading-tight font-medium text-mist">{q.label}</span>
+              <q.icon size={18} strokeWidth={1.8} className="text-violet" />
+              <span className="text-[10.5px] leading-tight font-medium text-mist">{q.label}</span>
             </Pressable>
           </motion.div>
         ))}

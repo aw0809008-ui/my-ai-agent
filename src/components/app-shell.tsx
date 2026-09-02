@@ -12,7 +12,9 @@ import {
 import { useRouter } from "next/navigation";
 import { AnimatePresence, motion } from "framer-motion";
 import { BellRing, Check, Clock, X } from "lucide-react";
+import clsx from "clsx";
 import { Orb } from "@/components/orb";
+import { Sidebar } from "@/components/sidebar";
 import { TabBar } from "@/components/tab-bar";
 import { Pressable } from "@/components/ui";
 import { api, clearToken, type AiHealth, type ApiUser, type UserSettings } from "@/lib/client";
@@ -24,6 +26,8 @@ interface ShellCtx {
   refresh: () => Promise<void>;
   patchProfile: (body: Record<string, unknown>) => Promise<void>;
   toast: (msg: string) => void;
+  /** open the mobile navigation drawer */
+  openNav: () => void;
 }
 
 const Ctx = createContext<ShellCtx | null>(null);
@@ -48,6 +52,8 @@ export function AppShell({ children }: { children: ReactNode }) {
   const [error, setError] = useState<string | null>(null);
   const [toastMsg, setToastMsg] = useState<string | null>(null);
   const [due, setDue] = useState<DueReminder[]>([]);
+  const [navOpen, setNavOpen] = useState(false);
+  const [collapsed, setCollapsed] = useState(false);
   const toastTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const load = useCallback(async () => {
@@ -97,7 +103,33 @@ export function AppShell({ children }: { children: ReactNode }) {
   const toast = useCallback((msg: string) => {
     setToastMsg(msg);
     if (toastTimer.current) clearTimeout(toastTimer.current);
-    toastTimer.current = setTimeout(() => setToastMsg(null), 2600);
+    toastTimer.current = setTimeout(() => setToastMsg(null), 3200);
+  }, []);
+
+  const openNav = useCallback(() => setNavOpen(true), []);
+
+  // restore sidebar collapse preference
+  useEffect(() => {
+    const t = setTimeout(() => {
+      try {
+        setCollapsed(localStorage.getItem("aura-sidebar") === "collapsed");
+      } catch {
+        /* storage blocked */
+      }
+    }, 0);
+    return () => clearTimeout(t);
+  }, []);
+
+  const toggleCollapse = useCallback(() => {
+    setCollapsed((c) => {
+      const next = !c;
+      try {
+        localStorage.setItem("aura-sidebar", next ? "collapsed" : "expanded");
+      } catch {
+        /* storage blocked */
+      }
+      return next;
+    });
   }, []);
 
   const patchProfile = useCallback(
@@ -183,8 +215,22 @@ export function AppShell({ children }: { children: ReactNode }) {
   }
 
   return (
-    <Ctx.Provider value={{ user, settings, ai, refresh: load, patchProfile, toast }}>
-      <div className="app-frame relative mx-auto flex w-full max-w-[430px] flex-col overflow-hidden border-x border-line/50 bg-void md:max-w-none md:border-0 lg:pl-[84px]">
+    <Ctx.Provider value={{ user, settings, ai, refresh: load, patchProfile, toast, openNav }}>
+      <Sidebar
+        mobileOpen={navOpen}
+        onMobileClose={() => setNavOpen(false)}
+        collapsed={collapsed}
+        onToggleCollapse={toggleCollapse}
+        isAdmin={user.role === "admin"}
+        userName={user.displayName}
+        userEmail={user.email}
+      />
+      <div
+        className={clsx(
+          "app-frame relative mx-auto flex w-full max-w-[430px] flex-col overflow-hidden border-x border-line/50 bg-void transition-[padding] duration-200 md:max-w-none md:border-0",
+          collapsed ? "lg:pl-[68px]" : "lg:pl-[264px]"
+        )}
+      >
         {/* due reminder banners */}
         <AnimatePresence>
           {due.map((r) => (
