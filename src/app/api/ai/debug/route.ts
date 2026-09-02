@@ -9,7 +9,7 @@ import {
   type FailureCategory,
 } from "@/lib/openrouter";
 import { selectModels } from "@/lib/model-router";
-import { imageCatalog, imageGenConfigured, imageModelId } from "@/lib/image-gen";
+import { hordeHealth, lastImageErrorCategory } from "@/lib/image-gen-horde";
 import { healthSnapshot } from "@/lib/model-health";
 
 // Explicit Node runtime: this route reads server-only env vars, PostgreSQL auth,
@@ -128,19 +128,19 @@ export async function GET() {
       }
     }
 
-    // image generation uses a SEPARATE provider + catalog (/v1/images)
-    const imgCatalog = await imageCatalog();
-    const imgId = imageModelId();
+    // Image GENERATION runs on AI Horde (free) — a different provider from the
+    // OpenRouter text/vision stack above.
+    const horde = await hordeHealth();
     const imageGeneration = {
-      configured: imageGenConfigured(),
-      modelId: imgId,
-      catalogReachable: imgCatalog !== null,
-      listedByProvider: imgCatalog ? imgCatalog.has(imgId) : null,
-      outputsImage: imgCatalog ? (imgCatalog.get(imgId)?.outputsImage ?? false) : null,
-      note:
-        imgCatalog && !imgCatalog.has(imgId)
-          ? "Model not in the image catalog — check openrouter.ai/models?output_modalities=image"
-          : "OpenRouter currently lists no ':free' image models; generation bills per image.",
+      provider: horde.provider,
+      configured: horde.configured,
+      anonymousKey: horde.anonymous,
+      reachable: horde.reachable,
+      model: horde.model,
+      workersForModel: horde.modelWorkers,
+      queueEtaSeconds: horde.queueEtaSeconds,
+      lastErrorCategory: lastImageErrorCategory(),
+      note: horde.note,
     };
 
     const diagnosis = !env.OPENROUTER_API_KEY?.nonEmpty

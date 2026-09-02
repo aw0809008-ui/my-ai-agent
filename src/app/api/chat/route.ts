@@ -23,7 +23,14 @@ import {
 import { executeTool, toolDescriptions, type ToolContext } from "@/lib/tools";
 import { detectImageGeneration, detectResearch, routeIntent } from "@/lib/intent";
 import { research } from "@/lib/search";
-import { generateImage, ImageGenError, imageGenConfigured } from "@/lib/image-gen";
+// Image GENERATION runs on AI Horde (free, crowdsourced) — deliberately
+// separate from image UNDERSTANDING, which stays on the OpenRouter vision path.
+import {
+  generateImage,
+  HordeError,
+  imageGenConfigured,
+  usingAnonymousKey,
+} from "@/lib/image-gen-horde";
 import {
   buildProjectPrompt,
   detectWebAppBuild,
@@ -658,7 +665,31 @@ Rules: never state a fact that is not supported by the material above; if the so
               label: "Generating image",
             });
             try {
-              const gen = await generateImage(imagePrompt);
+              let queueNotified = false;
+              const gen = await generateImage(imagePrompt, {
+                signal: clientGone.signal, // Stop button cancels polling
+                timeoutMs: 150_000,
+                onProgress: (p) => {
+                  // real queue status only — never a fabricated "almost done"
+                  if (p.processing > 0) {
+                    send("tool", {
+                      name: "generate_image",
+                      status: "running",
+                      label: "Rendering image",
+                    });
+                  } else if (p.queuePosition !== null && p.queuePosition > 0) {
+                    queueNotified = true;
+                    send("tool", {
+                      name: "generate_image",
+                      status: "running",
+                      label: `Waiting in free queue (#${p.queuePosition}${
+                        p.waitSeconds ? `, ~${p.waitSeconds}s` : ""
+                      })`,
+                    });
+                  }
+                },
+              });
+              void queueNotified;
               // Store in Postgres (same secure, user-scoped store as uploads —
               // no filesystem assumptions, works on Vercel serverless).
               const [row] = await db
@@ -704,21 +735,22 @@ Rules: never state a fact that is not supported by the material above; if the so
                 status: "error",
                 label: "Image generation failed",
               });
-              const cat = e instanceof ImageGenError ? e.category : "unknown";
+              const cat = e instanceof HordeError ? e.category : "unknown";
               const detail = e instanceof Error ? e.message : "unknown error";
+              const anonHint = usingAnonymousKey()
+                ? " You're on the shared anonymous queue — adding a free `AI_HORDE_API_KEY` (from aihorde.net) gives you much higher priority."
+                : "";
               const HINTS: Record<string, string> = {
-                auth: "The image provider rejected the API key. Check `OPENROUTER_API_KEY`.",
-                quota:
-                  "Image generation needs OpenRouter credits — there are currently **no free image models** on OpenRouter, so this model bills per image. Add credits, or set `MODEL_IMAGE_GENERATION` to a cheaper model.",
-                rate_limited:
-                  "The image model is rate limited right now. Please try again shortly.",
+                auth: "AI Horde rejected the API key. Check `AI_HORDE_API_KEY`, or remove it to use the free anonymous queue.",
+                quota: `AI Horde reports insufficient kudos for this request.${anonHint}`,
+                rate_limited: `The free AI Horde queue was too slow to finish this one.${anonHint} Please try again — queues move in waves.`,
                 not_found:
-                  "The configured image model wasn't found. Check `MODEL_IMAGE_GENERATION` against openrouter.ai/models?output_modalities=image.",
+                  "No AI Horde worker is currently serving the configured model. Set `AI_HORDE_MODEL` to an available one (see /api/ai/debug).",
                 unsupported:
-                  "The image provider rejected this request (unsupported parameter or format).",
-                upstream: "The image provider is having trouble (5xx). Please try again shortly.",
-                network: "Couldn't reach the image provider (network/timeout).",
-                empty: "The provider returned no image. Please try again.",
+                  "AI Horde rejected this request (unsupported parameters, or the prompt was filtered).",
+                upstream: "The AI Horde worker failed while generating. Please try again.",
+                network: "Couldn't reach AI Horde (network/timeout).",
+                empty: "AI Horde returned no image. Please try again.",
                 unknown: "Image generation failed.",
               };
               // honest failure — never claim an image was produced

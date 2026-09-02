@@ -204,18 +204,37 @@ SearXNG (SEARXNG_URL, self-hosted — most reliable)
 - **Production note:** public engines aggressively challenge datacenter IPs. For
   dependable search, run a small SearXNG container and set `SEARXNG_URL`.
 
-## 6c. Uploads & vision
+## 6c. Uploads, image understanding & image generation
 
-- App-level limits: ≤ **2 MB** per file (deliberately below Vercel's ~4.5 MB
-  serverless body cap), PNG/JPG/WEBP/PDF/TXT/MD/CSV/JSON only, user-scoped storage in
-  Postgres, owner-only serving, server-side MIME + extension whitelist.
-- Client pre-validation avoids silent failures; upload errors surface as a toast +
-  chip with the exact reason. iPhone **HEIC** photos aren't supported (clear
-  guidance shown — export as JPG).
-- Vision requests route to provider-verified image-capable models
-  (Nemotron 3 Nano Omni → Gemma 4 31B fallback). If the provider's capability
-  probe is temporarily down, registry-assigned vision models stay candidates so a
-  transient hiccup doesn't hard-fail the flow; the provider request is the verdict.
+**Uploads** — ≤ **2 MB** per file (below Vercel's ~4.5 MB serverless body cap),
+PNG/JPG/WEBP/PDF/TXT/MD/CSV/JSON only, user-scoped storage in Postgres,
+owner-only serving, server-side MIME + extension whitelist. Client
+pre-validation surfaces failures as a toast (HEIC is rejected with guidance).
+
+**Image UNDERSTANDING** (upload → analyse) stays on OpenRouter vision models:
+Nemotron 3 Nano Omni → Gemma 4 31B, chosen from provider-verified image input
+support.
+
+**Image GENERATION** ("create an image of…") runs on **AI Horde** — free,
+crowdsourced Stable Diffusion workers, **no credits and no card required**.
+`src/lib/image-gen-horde.ts` implements the documented v2 REST flow:
+
+```
+POST /api/v2/generate/async     → { id }
+GET  /api/v2/generate/check/:id → queue_position, wait_time, done, faulted
+GET  /api/v2/generate/status/:id→ generations[0].img (R2 URL)
+→ download → magic-byte + dimension validation → stored like any upload
+```
+
+- Works with **no key at all** (documented shared key `0000000000`). Setting a
+  free `AI_HORDE_API_KEY` from aihorde.net gives much higher queue priority.
+- Polling is bounded: 2s→5s backoff, 150s ceiling, and it bails out early with
+  a real ETA when the queue reports a wait far beyond that. The job is
+  cancelled server-side on timeout or when you press **Stop**.
+- Chat shows genuine status — "Generating image", "Waiting in free queue
+  (#N, ~Ns)", "Rendering image" — and on failure reports the real reason
+  (busy queue / no worker for the model / network) instead of a fake image.
+- The two paths never mix: an attached image always means *understanding*.
 
 ## 6d. Web App Builder (sandboxed live preview)
 
@@ -434,4 +453,6 @@ per-warm-instance — sufficient for a personal app; move to a shared store
 | All URLs redirect to a Vercel SSO page | Deployment Protection → Vercel Authentication: Disabled / Preview-only |
 | Image upload rejected | ≤ 2 MB, PNG/JPG/WEBP only; iPhone photos: share as "Medium" or convert HEIC → JPG |
 | "No vision-capable model" | Set `MODEL_NEMOTRON_OMNI`/Gemma with provider-verified image input |
+| Image generation says the queue is busy | Free AI Horde queue — retry, or add a free `AI_HORDE_API_KEY` from aihorde.net for priority |
+| "No AI Horde worker is serving the model" | Set `AI_HORDE_MODEL` to one listed at `/api/v2/status/models?type=image` (check `/api/ai/debug`) |
 | Voice says STT unavailable | Use Chrome (on-device ASR) or set `STT_MODEL` |
