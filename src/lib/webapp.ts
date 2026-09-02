@@ -146,6 +146,249 @@ export function validateProject(raw: unknown): ValidationResult {
   return { ok: true, project: p };
 }
 
+// ---------------------------------------------------------------------------
+// 2b. Code verification — run BEFORE a generated project is saved/rendered.
+//
+// This is a static, dependency-free sanity pass (not a full compiler). It
+// catches the failure modes models actually produce: truncated files, made-up
+// local imports, missing entry export, unbalanced delimiters. Anything it finds
+// is fed back to the model for one repair round, so the user gets a working
+// preview instead of a red error panel.
+// ---------------------------------------------------------------------------
+
+/** Strip strings/comments so delimiter counting isn't fooled by text. */
+function stripLiterals(src: string): string {
+  return src
+    .replace(/\\./g, "  ")
+    .replace(/\/\*[\s\S]*?\*\//g, " ")
+    .replace(/\/\/[^\n]*/g, " ")
+    .replace(/`(?:[^`$\\]|\\.|\$(?!\{))*`/g, "``")
+    .replace(/"(?:[^"\\\n]|\\.)*"/g, '""')
+    .replace(/'(?:[^'\\\n]|\\.)*'/g, "''");
+}
+
+function unbalanced(src: string): string | null {
+  const s = stripLiterals(src);
+  const pairs: [string, string, string][] = [
+    ["{", "}", "braces"],
+    ["(", ")", "parentheses"],
+    ["[", "]", "brackets"],
+  ];
+  for (const [open, close, label] of pairs) {
+    let depth = 0;
+    for (const ch of s) {
+      if (ch === open) depth++;
+      else if (ch === close) depth--;
+      if (depth < 0) return `unbalanced ${label} (extra "${close}")`;
+    }
+    if (depth > 0) return `unbalanced ${label} (${depth} unclosed "${open}") — file looks truncated`;
+  }
+  return null;
+}
+
+const TRUNCATION_MARKERS =
+  /(\/\/|\/\*|\{\s*\/\*)\s*(\.\.\.|rest of (the )?(code|file|component)|remaining code|your code here|implementation here|unchanged)/i;
+
+/** Resolve a relative import the same way the preview runtime does. */
+function resolveLocal(spec: string, from: string, paths: Set<string>): string | null {
+  const base = from.split("/").slice(0, -1);
+  for (const part of spec.split("/")) {
+    if (part === "." || part === "") continue;
+    if (part === "..") base.pop();
+    else base.push(part);
+  }
+  const p = base.join("/");
+  const candidates = [
+    p,
+    `${p}.tsx`,
+    `${p}.ts`,
+    `${p}.jsx`,
+    `${p}.js`,
+    `${p}.css`,
+    `${p}/index.tsx`,
+    `${p}/index.ts`,
+    `${p}/index.jsx`,
+    `${p}/index.js`,
+  ];
+  return candidates.find((c) => paths.has(c)) ?? null;
+}
+
+export interface CodeIssue {
+  path: string;
+  problem: string;
+}
+
+/**
+ * Static verification of a validated project. Returns [] when the project
+ * looks structurally sound.
+ */
+export function verifyProjectCode(project: ProjectPayload): CodeIssue[] {
+  const issues: CodeIssue[] = [];
+  const paths = new Set(project.files.map((f) => f.path));
+
+  for (const f of project.files) {
+    if (!f.content.trim()) {
+      issues.push({ path: f.path, problem: "file is empty" });
+      continue;
+    }
+    if (TRUNCATION_MARKERS.test(f.content)) {
+      issues.push({
+        path: f.path,
+        problem: "contains a placeholder/omitted-code comment instead of real source",
+      });
+    }
+    if (/\.(tsx|ts|jsx|js)$/.test(f.path)) {
+      const bad = unbalanced(f.content);
+      if (bad) issues.push({ path: f.path, problem: bad });
+
+      // every local import must resolve to a file that exists
+      const importRe = /\bfrom\s+["'](\.[^"']+)["']|\bimport\s+["'](\.[^"']+)["']/g;
+      let m: RegExpExecArray | null;
+      while ((m = importRe.exec(f.content))) {
+        const spec = m[1] ?? m[2];
+        if (!spec) continue;
+        if (!resolveLocal(spec, f.path, paths)) {
+          issues.push({
+            path: f.path,
+            problem: `imports "${spec}" but no such file exists in the project`,
+          });
+        }
+      }
+
+      // bare (non-relative) imports other than react are not available
+      const bareRe = /\bfrom\s+["']([^."'][^"']*)["']/g;
+      while ((m = bareRe.exec(f.content))) {
+        const pkg = m[1];
+        if (pkg === "react" || pkg === "react-dom" || pkg.startsWith("react-dom/")) continue;
+        issues.push({
+          path: f.path,
+          problem: `imports npm package "${pkg}", which is not available in the preview (only "react" is)`,
+        });
+      }
+    }
+  }
+
+  // the entry must actually export a component the runtime can mount
+  const entry = project.files.find((f) => f.path === project.entry);
+  if (entry && /\.(tsx|jsx)$/.test(entry.path)) {
+    const hasDefault = /export\s+default\b/.test(entry.content);
+    const rendersItself = /createRoot|ReactDOM\.render/.test(entry.content);
+    if (!hasDefault && !rendersItself) {
+      issues.push({
+        path: entry.path,
+        problem: "entry file has no `export default` component and does not render itself",
+      });
+    }
+  }
+
+  return issues.slice(0, 12);
+}
+
+// ---------------------------------------------------------------------------
+// 2c. Change summary (visual diff) — what the AI actually touched
+// ---------------------------------------------------------------------------
+
+export interface FileChange {
+  path: string;
+  status: "added" | "modified" | "removed";
+  added: number;
+  removed: number;
+}
+
+export interface ChangeSummary {
+  files: FileChange[];
+  filesChanged: number;
+  linesAdded: number;
+  linesRemoved: number;
+}
+
+/** Line-level added/removed counts using a multiset comparison (order-insensitive,
+ *  good enough for a "+48 / -17" style summary without a full diff algorithm). */
+function lineDelta(before: string, after: string): { added: number; removed: number } {
+  const count = (s: string) => {
+    const m = new Map<string, number>();
+    for (const line of s.split("\n")) {
+      const k = line.trim();
+      if (!k) continue;
+      m.set(k, (m.get(k) ?? 0) + 1);
+    }
+    return m;
+  };
+  const b = count(before);
+  const a = count(after);
+  let added = 0;
+  let removed = 0;
+  for (const [line, n] of a) added += Math.max(0, n - (b.get(line) ?? 0));
+  for (const [line, n] of b) removed += Math.max(0, n - (a.get(line) ?? 0));
+  return { added, removed };
+}
+
+export function diffProjects(
+  before: { path: string; content: string }[],
+  after: { path: string; content: string }[]
+): ChangeSummary {
+  const beforeMap = new Map(before.map((f) => [f.path, f.content]));
+  const afterMap = new Map(after.map((f) => [f.path, f.content]));
+  const files: FileChange[] = [];
+
+  for (const [path, content] of afterMap) {
+    const prev = beforeMap.get(path);
+    if (prev === undefined) {
+      files.push({
+        path,
+        status: "added",
+        added: content.split("\n").filter((l) => l.trim()).length,
+        removed: 0,
+      });
+    } else if (prev !== content) {
+      const d = lineDelta(prev, content);
+      files.push({ path, status: "modified", ...d });
+    }
+  }
+  for (const [path, content] of beforeMap) {
+    if (!afterMap.has(path)) {
+      files.push({
+        path,
+        status: "removed",
+        added: 0,
+        removed: content.split("\n").filter((l) => l.trim()).length,
+      });
+    }
+  }
+
+  return {
+    files,
+    filesChanged: files.length,
+    linesAdded: files.reduce((n, f) => n + f.added, 0),
+    linesRemoved: files.reduce((n, f) => n + f.removed, 0),
+  };
+}
+
+/** Ask the model to repair the specific issues verification found. */
+export function repairIssuesPrompt(
+  issues: CodeIssue[],
+  files: { path: string; content: string }[],
+  entry: string
+): string {
+  const list = issues.map((i) => `- ${i.path}: ${i.problem}`).join("\n");
+  const listing = files
+    .map((f) => `--- ${f.path} ---\n${f.content.slice(0, 6000)}`)
+    .join("\n\n");
+  return `Automated verification found problems in this React project before it could run:
+
+${list}
+
+Current project (entry: ${entry}):
+
+${listing}
+
+Fix every issue listed. ${RULES}
+
+Return the COMPLETE corrected project.
+
+${SHAPE}`;
+}
+
 /** Pull a JSON object out of a model reply (handles ```json fences + prose). */
 export function extractJson(text: string): unknown | null {
   const fenced = text.match(/```(?:json)?\s*([\s\S]*?)```/);

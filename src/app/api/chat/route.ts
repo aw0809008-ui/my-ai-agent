@@ -32,6 +32,9 @@ import {
   fixProjectPrompt,
   isProjectEdit,
   validateProject,
+  verifyProjectCode,
+  repairIssuesPrompt,
+  diffProjects,
 } from "@/lib/webapp";
 import { formatProfile, profileDataset } from "@/lib/data-analysis";
 import { topK } from "@/lib/embeddings";
@@ -419,13 +422,27 @@ I searched ${r.queries.length} query variations and collected these sources. Tre
 
 ${dossier}
 
-Write a well-structured Markdown report:
-- lead with the direct answer / key findings
-- group findings by theme with headings
-- cite inline like [Source Name](URL) using ONLY the URLs above
-- explicitly note where sources disagree or where evidence is thin
-- do not state facts that are not supported by the sources above
-- end with a "Sources" list`,
+Write a Markdown research report with EXACTLY these sections:
+
+## Summary
+2–4 sentences answering the request directly.
+
+## Key findings
+Bulleted, most important first. Cite each claim inline like [Source Name](URL) using ONLY the URLs above.
+
+## Evidence
+The concrete details, numbers or quotes that support the findings, each attributed to its source.
+
+## Conflicting information
+Where sources disagree, or where a claim appears in only one source. Write "No significant conflicts found across these sources." if that is genuinely the case — never leave this section out.
+
+## Recommendation
+Your practical takeaway, and explicitly state how confident you are given the evidence available.
+
+## Sources
+Numbered list of the sources you actually used.
+
+Rules: never state a fact that is not supported by the material above; if the sources don't answer part of the request, say so plainly instead of filling the gap.`,
                 },
               ];
               try {
@@ -493,7 +510,60 @@ Write a well-structured Markdown report:
                   `I couldn't produce a valid app project.\n\n**Reason:** ${check.error ?? "malformed project output"}\n\nTry rephrasing, or ask again — the model sometimes returns incomplete JSON.`
                 );
               } else {
-                const proj = check.project;
+                let proj = check.project;
+
+                // ---- verification pass: catch truncated files, phantom
+                // imports, missing entry export BEFORE the user sees a broken
+                // preview. One automatic repair round, then report honestly.
+                let issues = verifyProjectCode(proj);
+                if (issues.length) {
+                  logEvent({
+                    msg: "webapp_verify_failed",
+                    rid,
+                    issues: issues.map((i) => `${i.path}: ${i.problem}`).slice(0, 6),
+                  });
+                  send("tool", {
+                    name: "web_app_build",
+                    status: "running",
+                    label: "Verifying & repairing",
+                  });
+                  let repairText = "";
+                  try {
+                    for await (const chunk of routed(
+                      [
+                        {
+                          role: "system",
+                          content:
+                            "You are a senior frontend engineer. You reply with a single valid JSON object and no other text.",
+                        },
+                        {
+                          role: "user",
+                          content: repairIssuesPrompt(issues, proj.files, proj.entry),
+                        },
+                      ],
+                      "coding",
+                      8000
+                    )) {
+                      repairText += chunk;
+                    }
+                  } catch {
+                    /* keep the unrepaired project below */
+                  }
+                  const repaired = validateProject(extractJson(repairText));
+                  if (repaired.ok && repaired.project) {
+                    const afterIssues = verifyProjectCode(repaired.project);
+                    // only accept the repair if it genuinely improved things
+                    if (afterIssues.length < issues.length) {
+                      proj = repaired.project;
+                      issues = afterIssues;
+                      logEvent({ msg: "webapp_repaired", rid, remaining: issues.length });
+                    }
+                  }
+                }
+
+                const changes = activeProject
+                  ? diffProjects(activeProject.files, proj.files)
+                  : null;
                 let projectId = activeProject?.id ?? null;
                 if (activeProject) {
                   // snapshot the previous state so the user can undo
@@ -536,15 +606,38 @@ Write a well-structured Markdown report:
                   entry: proj.entry,
                   fileCount: proj.files.length,
                   files: proj.files.map((f) => f.path),
+                  changes,
+                  verified: issues.length === 0,
                 });
                 projectRef = projectId;
 
                 // compact chat summary — never dump the whole project
-                const changed = proj.files.map((f) => `\`${f.path}\``).join(", ");
+                // Change summary: on edits show what actually moved (+/- lines),
+                // on first build just list the files.
+                const changeLine =
+                  changes && changes.filesChanged > 0
+                    ? `${changes.filesChanged} file${changes.filesChanged === 1 ? "" : "s"} changed · +${changes.linesAdded} −${changes.linesRemoved}\n\n` +
+                      changes.files
+                        .map(
+                          (c) =>
+                            `- \`${c.path}\` _(${c.status}${
+                              c.status === "modified" ? `, +${c.added} −${c.removed}` : ""
+                            })_`
+                        )
+                        .join("\n")
+                    : `${proj.files.length} file${proj.files.length === 1 ? "" : "s"}: ` +
+                      proj.files.map((f) => `\`${f.path}\``).join(", ");
+
+                const warn = issues.length
+                  ? `\n\n⚠️ Verification still flags ${issues.length} issue${
+                      issues.length === 1 ? "" : "s"
+                    } (${issues[0].path}: ${issues[0].problem}). The preview may fail — use **Fix it** if it does.`
+                  : "";
+
                 pushAll(
                   `**${proj.name}** — ${
                     body.fixError ? "fixed" : editing ? "updated" : "created"
-                  }.\n\n${proj.summary ?? "Your app is ready in the workspace."}\n\n${proj.files.length} file${proj.files.length === 1 ? "" : "s"}: ${changed}`
+                  }.\n\n${proj.summary ?? "Your app is ready in the workspace."}\n\n${changeLine}${warn}`
                 );
                 await db
                   .insert(usageEvents)

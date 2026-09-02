@@ -10,6 +10,7 @@ import {
 } from "@/lib/openrouter";
 import { selectModels } from "@/lib/model-router";
 import { imageCatalog, imageGenConfigured, imageModelId } from "@/lib/image-gen";
+import { healthSnapshot } from "@/lib/model-health";
 
 // Explicit Node runtime: this route reads server-only env vars, PostgreSQL auth,
 // and performs a server-side OpenRouter probe. It must never be edge-cached.
@@ -173,6 +174,8 @@ export async function GET() {
             }
           : { best: null, dropped: selection.drop },
         imageGeneration,
+        // free-quota intelligence: which models are cooling down right now
+        modelHealth: healthSnapshot(),
         probe,
         diagnosis,
       },

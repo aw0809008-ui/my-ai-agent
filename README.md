@@ -246,6 +246,31 @@ MiniMax M3 → M2.7 → Laguna → GLM) → zod validation → projects table
 - **Persistence**: `projects` + `project_versions`, scoped by `userId`; every
   read/update/delete is ownership-checked (cross-user access returns 404).
 
+## 6d-2. Reliability upgrades
+
+**Free-quota intelligence** (`src/lib/model-health.ts`) — every model outcome is
+tracked per instance. After a failure the model gets an escalating cooldown
+(429/402 → 1m…30m, 5xx/network → 10s…5m, auth/404 → 2m…30m) and the router
+pushes it to the back of the chain until it expires; any success clears it
+instantly. Cooldowns never hard-block: if every candidate is cooling down the
+normal preference order is used, so the app stays usable. Visible to admins in
+`/api/ai/debug → modelHealth`.
+
+**Generated-code verification + self-healing** — before a project is saved the
+server statically checks it (`verifyProjectCode`): truncated files (unbalanced
+delimiters, ignoring string/comment contents), placeholder "rest of code"
+comments, imports of files that don't exist, imports of npm packages the preview
+can't provide, and a missing entry export. Any findings trigger **one automatic
+repair round**; the repair is only accepted if it reduces the issue count, and
+anything left is reported honestly in chat rather than hidden. In the workspace,
+the first occurrence of each distinct preview error also **auto-repairs once**
+(guarded by an error-signature set so fix→error→fix cannot loop); repeats fall
+back to the manual **Fix it** button.
+
+**Change summary** — edits report `N files changed · +X −Y` with a per-file
+added/modified/removed breakdown in chat and in the `project` SSE event, so you
+can see exactly what the AI touched (undo via version restore).
+
 ## 6e. Research mode
 
 Deep-research requests ("research X", "compare A vs B", "market research on…")
@@ -255,6 +280,15 @@ take a multi-source path instead of a single lookup:
 topic → 3 query angles → merge across providers → dedupe by domain+path
       → fetch readable text from the top 4 pages → cited Markdown report
 ```
+
+Reports are structured: **Summary → Key findings → Evidence → Conflicting
+information → Recommendation → Sources**, with the conflicts section mandatory
+so single-source or disputed claims are visible rather than smoothed over.
+
+Reports use a fixed structure — **Summary → Key findings → Evidence →
+Conflicting information → Recommendation → Sources** — with the conflicts
+section mandatory, so single-source or disputed claims stay visible instead of
+being smoothed over.
 
 Source text is passed to the model as **untrusted DATA** with an explicit
 instruction not to follow it, and the report must cite only the collected URLs.

@@ -32,6 +32,7 @@ import {
   imageMessage,
 } from "@/lib/openrouter";
 import { logEvent } from "@/lib/http";
+import { prioritiseHealthy, recordFailure, recordSuccess } from "@/lib/model-health";
 
 // ---------------------------------------------------------------------------
 // 1. Task classification — weighted multi-signal, NOT just keyword matching.
@@ -202,11 +203,16 @@ export function selectModels(
   const sorted = [...candidates].sort(
     (a, b) => rankForTask(a, category) - rankForTask(b, category)
   );
+  // Quota intelligence: models that just failed (429/5xx/auth) are pushed to
+  // the back of the chain until their cooldown expires, so we don't waste free
+  // quota re-hitting them. Nothing is dropped — if everything is cooling down
+  // the original preference order is kept.
+  const ordered = prioritiseHealthy(sorted);
   // best + up to 3 fallbacks (4 models max) — deep enough for the explicit
   // coding chain MiniMax M3 → MiniMax M2.7 → Laguna → GLM, still bounded so a
   // total outage can't fan out into unbounded retries. One model per request
   // in the happy path; deeper entries are only reached on actual failure.
-  return { best: sorted[0] ?? null, chain: sorted.slice(1, 4), drop };
+  return { best: ordered[0] ?? null, chain: ordered.slice(1, 4), drop };
 }
 
 function estimateTokens(messages: ChatMessage[]): number {
@@ -308,6 +314,7 @@ export function streamBest(
           if (tokens === 0) {
             throw new OpenRouterError("empty stream", null, true);
           }
+          recordSuccess(meta.key); // clears any cooldown
           logEvent({
             msg: "model_ok",
             model: meta.key,
@@ -324,6 +331,7 @@ export function streamBest(
             return;
           }
           const cat = e instanceof OpenRouterError ? e.category : "network";
+          recordFailure(meta.key, cat); // start/extend this model's cooldown
           failureCats.push(cat);
           logEvent({
             msg: "model_failed",

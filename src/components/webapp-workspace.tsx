@@ -53,7 +53,10 @@ export function WebAppWorkspace({ projectId, onClose, onFix, busy }: Props) {
   const [mobileFrame, setMobileFrame] = useState(false);
   const [copied, setCopied] = useState(false);
   const [showVersions, setShowVersions] = useState(false);
+  const [autoHealing, setAutoHealing] = useState(false);
   const iframeRef = useRef<HTMLIFrameElement>(null);
+  /** error signatures already auto-repaired — prevents fix→error→fix loops */
+  const healedRef = useRef<Set<string>>(new Set());
 
   const load = useCallback(async () => {
     setLoadError(null);
@@ -102,6 +105,30 @@ export function WebAppWorkspace({ projectId, onClose, onFix, busy }: Props) {
     if (!project) return "";
     return buildPreviewHtml(project.files, project.entry);
   }, [project]);
+
+  // ---- self-healing ------------------------------------------------------
+  // The first time a given compile/runtime error appears, ask the assistant to
+  // repair it automatically. Each distinct error is only auto-healed ONCE, and
+  // never while a generation is already running, so this cannot loop.
+  useEffect(() => {
+    if (!previewError || busy || !project) return;
+    const signature = previewError.slice(0, 160);
+    if (healedRef.current.has(signature)) return;
+    healedRef.current.add(signature);
+    // deferred so no state update runs synchronously inside the effect
+    const t = setTimeout(() => {
+      setAutoHealing(true);
+      onFix(previewError);
+    }, 400);
+    return () => clearTimeout(t);
+  }, [previewError, busy, project, onFix]);
+
+  // clear the healing flag once the assistant finishes
+  useEffect(() => {
+    if (busy !== false) return;
+    const t = setTimeout(() => setAutoHealing(false), 0);
+    return () => clearTimeout(t);
+  }, [busy]);
 
   const refresh = () => {
     setPreviewError(null);
@@ -341,18 +368,28 @@ export function WebAppWorkspace({ projectId, onClose, onFix, busy }: Props) {
               <AlertTriangle size={14} className="mt-0.5 shrink-0 text-danger" />
               <div className="min-w-0 flex-1">
                 <p className="text-[12px] font-semibold text-danger">
-                  Preview failed to compile
+                  {autoHealing || busy
+                    ? "Preview failed — repairing automatically…"
+                    : "Preview failed to compile"}
                 </p>
                 <pre className="mt-1 max-h-24 overflow-auto text-[11px] leading-snug whitespace-pre-wrap text-mist slim-scroll">
                   {previewError}
                 </pre>
               </div>
               <button
-                onClick={() => onFix(previewError)}
-                disabled={busy}
+                onClick={() => {
+                  healedRef.current.add(previewError.slice(0, 160));
+                  onFix(previewError);
+                }}
+                disabled={busy || autoHealing}
                 className="flex shrink-0 items-center gap-1.5 rounded-lg bg-danger/15 px-3 py-1.5 text-[11.5px] font-semibold text-danger disabled:opacity-50"
               >
-                <Wrench size={12} /> Fix it
+                {busy || autoHealing ? (
+                  <Spinner className="h-3 w-3 border-danger/30 border-t-danger" />
+                ) : (
+                  <Wrench size={12} />
+                )}
+                {busy || autoHealing ? "Fixing…" : "Fix it"}
               </button>
             </div>
           </motion.div>
