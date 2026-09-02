@@ -1,7 +1,13 @@
 "use client";
 
 import { usePathname, useRouter } from "next/navigation";
-import { Home, MessagesSquare, Brain, AlarmClockCheck, Settings } from "lucide-react";
+import {
+  Home,
+  MessagesSquare,
+  LayoutTemplate,
+  AlarmClockCheck,
+  Settings,
+} from "lucide-react";
 import { motion } from "framer-motion";
 import clsx from "clsx";
 
@@ -9,7 +15,7 @@ import clsx from "clsx";
 // Secondary destinations flank it.
 const LEFT = [
   { href: "/home", label: "Home", icon: Home },
-  { href: "/memory", label: "Memory", icon: Brain },
+  { href: "/projects", label: "Projects", icon: LayoutTemplate },
 ];
 const RIGHT = [
   { href: "/tasks", label: "Tasks", icon: AlarmClockCheck },

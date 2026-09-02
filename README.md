@@ -246,6 +246,45 @@ MiniMax M3 → M2.7 → Laguna → GLM) → zod validation → projects table
 - **Persistence**: `projects` + `project_versions`, scoped by `userId`; every
   read/update/delete is ownership-checked (cross-user access returns 404).
 
+## 6e. Research mode
+
+Deep-research requests ("research X", "compare A vs B", "market research on…")
+take a multi-source path instead of a single lookup:
+
+```
+topic → 3 query angles → merge across providers → dedupe by domain+path
+      → fetch readable text from the top 4 pages → cited Markdown report
+```
+
+Source text is passed to the model as **untrusted DATA** with an explicit
+instruction not to follow it, and the report must cite only the collected URLs.
+If zero sources are gathered, the app says so — it never invents current facts.
+
+## 6f. Data analysis (no fabricated numbers)
+
+CSV/TSV/JSON uploads are profiled **deterministically in Node** before the model
+sees anything (`src/lib/data-analysis.ts`): RFC4180 parser with delimiter
+sniffing, per-column type inference, null/distinct counts, and for numeric
+columns min/max/mean/median/sum, plus top values for categoricals.
+
+The model receives only this computed profile and is told to use those numbers
+and to say what extra computation would be needed for anything else — so
+statistics are never hallucinated.
+
+## 6g. Projects
+
+`/projects` lists every app you generated, with the live sandboxed preview,
+code view, version restore and delete. Projects are created and edited from
+Chat; the page is for finding and managing them afterwards. All access is
+ownership-scoped (another user gets 404).
+
+## 6h. Personal AI preferences
+
+Settings → AI preferences: response length, tone, and free-text custom
+instructions. Preferences are appended to the system prompt as guidance, and
+custom instructions are wrapped in a delimited block that explicitly cannot
+override safety, tool or authorization rules.
+
 ## 7. Tools (function calling)
 
 Internal registry: `search_web`, `save_memory`, `search_memory`, `delete_memory`,

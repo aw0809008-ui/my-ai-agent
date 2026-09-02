@@ -16,6 +16,7 @@ import {
   Palette,
   Server,
   ShieldCheck,
+  Sparkles,
   Sun,
   User,
   Volume2,
@@ -174,6 +175,72 @@ export default function SettingsPage() {
               </>
             )}
           </p>
+        </div>
+      </Section>
+
+      {/* AI preferences */}
+      <Section icon={Sparkles} title="AI preferences">
+        <div className="grid gap-4">
+          <div>
+            <p className="mb-2 text-[12px] font-medium tracking-wide text-mist uppercase">
+              Response length
+            </p>
+            <div className="flex flex-wrap gap-1.5">
+              {(["concise", "balanced", "detailed"] as const).map((v) => (
+                <Chip
+                  key={v}
+                  active={(settings.ai?.length ?? "balanced") === v}
+                  onClick={async () => {
+                    await patchProfile({ ai: { length: v } });
+                    toast(`Responses: ${v}`);
+                  }}
+                >
+                  {v}
+                </Chip>
+              ))}
+            </div>
+          </div>
+          <div>
+            <p className="mb-2 text-[12px] font-medium tracking-wide text-mist uppercase">
+              Tone
+            </p>
+            <div className="flex flex-wrap gap-1.5">
+              {(["neutral", "friendly", "direct", "formal"] as const).map((v) => (
+                <Chip
+                  key={v}
+                  active={(settings.ai?.tone ?? "neutral") === v}
+                  onClick={async () => {
+                    await patchProfile({ ai: { tone: v } });
+                    toast(`Tone: ${v}`);
+                  }}
+                >
+                  {v}
+                </Chip>
+              ))}
+            </div>
+          </div>
+          <label className="block">
+            <span className="mb-1.5 block text-[12px] font-medium tracking-wide text-mist uppercase">
+              Custom instructions
+            </span>
+            <textarea
+              className={clsx(inputCls, "min-h-[90px] resize-none py-2.5 text-[13px]")}
+              defaultValue={settings.ai?.customInstructions ?? ""}
+              maxLength={1000}
+              placeholder="e.g. I'm a Next.js developer in Karachi. Prefer TypeScript examples and metric units."
+              onBlur={async (e) => {
+                const v = e.target.value.trim();
+                if (v !== (settings.ai?.customInstructions ?? "")) {
+                  await patchProfile({ ai: { customInstructions: v } });
+                  toast("Custom instructions saved");
+                }
+              }}
+            />
+            <span className="mt-1 block text-[11px] leading-relaxed text-faint">
+              Applied as preferences only — they can&apos;t change security, tools or
+              data-access rules.
+            </span>
+          </label>
         </div>
       </Section>
 

@@ -27,6 +27,10 @@ const schema = z.object({
     .object({
       style: z.string().max(40).optional(),
       modelPreference: z.string().max(40).optional(),
+      length: z.enum(["concise", "balanced", "detailed"]).optional(),
+      tone: z.enum(["neutral", "friendly", "direct", "formal"]).optional(),
+      /** user-authored guidance; injected as DATA, never as a security override */
+      customInstructions: z.string().max(1000).optional(),
     })
     .optional(),
 });

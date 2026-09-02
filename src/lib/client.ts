@@ -17,7 +17,13 @@ export interface UserSettings {
   theme: "dark" | "light" | "system";
   voice: { enabled?: boolean; autoplay?: boolean; rate?: number; voiceName?: string };
   notifications: { enabled?: boolean; sound?: boolean };
-  ai: { style?: string; modelPreference?: string };
+  ai: {
+    style?: string;
+    modelPreference?: string;
+    length?: string;
+    tone?: string;
+    customInstructions?: string;
+  };
 }
 
 export interface AiHealth {

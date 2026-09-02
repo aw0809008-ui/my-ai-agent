@@ -305,6 +305,89 @@ export async function webSearch(query: string, limit = 6): Promise<SearchOutcome
   return { results: [], provider: null, failures };
 }
 
+// ---------------------------------------------------------------------------
+// Research mode — multi-query search, cross-provider dedupe, content extraction
+// ---------------------------------------------------------------------------
+
+export interface ResearchSource extends SearchResult {
+  /** extracted page text (empty when the page could not be read) */
+  excerpt: string;
+}
+
+export interface ResearchOutcome {
+  sources: ResearchSource[];
+  queries: string[];
+  provider: string | null;
+  failures: string[];
+}
+
+/** Build a few angle variations so we don't rely on a single phrasing. */
+export function researchQueries(topic: string): string[] {
+  const base = topic.replace(/^(research|deep dive into|investigate|find out about)\s+/i, "").trim();
+  const short = base.split(/\s+/).slice(0, 10).join(" ");
+  const out = [base];
+  if (!/\b20\d\d\b/.test(base)) out.push(`${short} ${new Date().getFullYear()}`);
+  out.push(`${short} comparison OR review OR analysis`);
+  return [...new Set(out)].slice(0, 3);
+}
+
+/**
+ * Run several searches, merge and dedupe by domain+path, then fetch readable
+ * text from the top results so the model can synthesise from real content
+ * rather than snippets alone.
+ */
+export async function research(
+  topic: string,
+  opts: { maxSources?: number; fetchPages?: number } = {}
+): Promise<ResearchOutcome> {
+  const maxSources = opts.maxSources ?? 8;
+  const fetchPages = opts.fetchPages ?? 4;
+  const queries = researchQueries(topic);
+  const failures: string[] = [];
+  const seen = new Set<string>();
+  const merged: SearchResult[] = [];
+  let provider: string | null = null;
+
+  for (const q of queries) {
+    const r = await webSearch(q, 6);
+    if (r.provider && !provider) provider = r.provider;
+    failures.push(...r.failures);
+    for (const item of r.results) {
+      let key = item.source;
+      try {
+        key = `${new URL(item.url).hostname}${new URL(item.url).pathname}`.toLowerCase();
+      } catch {
+        /* keep domain key */
+      }
+      if (seen.has(key)) continue;
+      seen.add(key);
+      merged.push(item);
+    }
+    if (merged.length >= maxSources) break;
+  }
+
+  const top = merged.slice(0, maxSources);
+  // fetch page bodies for the first few sources, in parallel, best-effort
+  const texts = await Promise.all(
+    top.slice(0, fetchPages).map((s) => fetchPageText(s.url, 1800).catch(() => ""))
+  );
+
+  const sources: ResearchSource[] = top.map((s, i) => ({
+    ...s,
+    excerpt: (texts[i] ?? "").trim(),
+  }));
+
+  logEvent({
+    msg: "research_done",
+    queries: queries.length,
+    sources: sources.length,
+    withContent: sources.filter((s) => s.excerpt.length > 200).length,
+    provider,
+  });
+
+  return { sources, queries, provider, failures: [...new Set(failures)] };
+}
+
 /** Fetch readable text content from a page (for search synthesis). */
 export async function fetchPageText(url: string, maxChars = 1600): Promise<string> {
   try {

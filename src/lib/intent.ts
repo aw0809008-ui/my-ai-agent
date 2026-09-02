@@ -83,6 +83,25 @@ const TIME = String.raw`(?:at\s+\d{1,2}(?::\d{2})?\s*(?:a\.?m\.?|p\.?m\.?|am|pm)
 const TIME_AT_END = new RegExp(`^([\\s\\S]*?)\\s+(${TIME})[.,!?\\s]*$`, "i");
 const TIME_AT_START = new RegExp(`^(${TIME})[.,!?\\s]*\\s+(?:to\\s+)?([\\s\\S]+)$`, "i");
 
+/**
+ * Detect a DEEP RESEARCH request (multi-source, comparison, report) as opposed
+ * to a quick lookup. Plain "search the web for X" stays on the fast path.
+ */
+export function detectResearch(raw: string): string | null {
+  const text = raw.trim();
+  if (text.length < 12 || text.length > 2000) return null;
+  const t = text.toLowerCase();
+
+  const RESEARCH_VERB =
+    /\b(research|deep[- ]?dive|investigate|market research|competitor analysis|write (?:me )?a report|in[- ]depth (?:look|analysis|report)|comprehensive (?:overview|analysis|report)|literature review)\b/;
+  const COMPARE =
+    /\b(compare|comparison|versus|\bvs\.?\b|pros and cons|which is better|alternatives to)\b/;
+
+  if (RESEARCH_VERB.test(t)) return text;
+  if (COMPARE.test(t) && text.split(/\s+/).length >= 5) return text;
+  return null;
+}
+
 export function routeIntent(raw: string): IntentCall | null {
   const text = raw.trim();
   const t = text.toLowerCase();

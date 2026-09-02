@@ -9,6 +9,7 @@ import {
   ChevronsLeft,
   ChevronsRight,
   Home,
+  LayoutTemplate,
   MessagesSquare,
   PanelLeftClose,
   Plus,
@@ -23,6 +24,7 @@ import { api, relTime, type ConversationItem } from "@/lib/client";
 const NAV = [
   { href: "/home", label: "Home", icon: Home },
   { href: "/chat", label: "Chats", icon: MessagesSquare },
+  { href: "/projects", label: "Projects", icon: LayoutTemplate },
   { href: "/memory", label: "Memory", icon: Brain },
   { href: "/tasks", label: "Tasks", icon: AlarmClockCheck },
 ];
